@@ -123,7 +123,7 @@ where
 
 	if req_path.starts_with(&(CONFIG.wisp.prefix.clone() + "/")) {
 		let has_ws_protocol = ws_protocol.is_some();
-		tokio::spawn(async move {
+		monoio::spawn(async move {
 			if let Err(err) =
 				(callback)(fut, HttpUpgradeResult::Wisp(has_ws_protocol), ip_header).await
 			{
@@ -136,7 +136,7 @@ where
 		}
 	} else if CONFIG.wisp.allow_wsproxy {
 		let udp = req.uri().query().unwrap_or_default() == "?udp";
-		tokio::spawn(async move {
+		monoio::spawn(async move {
 			if let Err(err) =
 				(callback)(fut, HttpUpgradeResult::WsProxy(req_path, udp), ip_header).await
 			{

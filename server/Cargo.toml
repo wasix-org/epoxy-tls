@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
-async-trait = { version = "0.1.81", optional = true }
+async-trait = "0.1.81"
 bytes = "1.7.1"
 cfg-if = "1.0.0"
 clap = { version = "4.5.16", features = ["cargo", "derive"] }
@@ -22,6 +22,8 @@ hyper-util = { version = "0.1.7", features = ["tokio"] }
 lazy_static = "1.5.0"
 libc = { version = "0.2.158", optional = true }
 log = { version = "0.4.22", features = ["serde", "std"] }
+monoio = { version = "0.2.4", git = "https://github.com/bytedance/monoio" }
+monoio-compat = { version = "0.2.2", git = "https://github.com/bytedance/monoio" }
 nix = { version = "0.29.0", features = ["term"] }
 pty-process = { version = "0.4.0", features = ["async", "tokio"], optional = true }
 regex = "1.10.6"
@@ -33,7 +35,7 @@ sha2 = "0.10.8"
 shell-words = { version = "1.1.0", optional = true }
 tikv-jemalloc-ctl = { version = "0.6.0", features = ["stats", "use_std"] }
 tikv-jemallocator = "0.6.0"
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { version = "1.39.3", features = ["macros"] }
 tokio-rustls = { version = "0.26.0", features = ["ring", "tls12"], default-features = false }
 tokio-util = { version = "0.7.11", features = ["codec", "compat", "io-util", "net"] }
 toml = { version = "0.8.19", optional = true }
@@ -46,7 +48,7 @@ default = ["toml"]
 yaml = ["dep:serde_yaml"]
 toml = ["dep:toml"]
 
-twisp = ["dep:pty-process", "dep:libc", "dep:async-trait", "dep:shell-words"]
+twisp = ["dep:pty-process", "dep:libc", "dep:shell-words"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.0", features = ["rustc"] }

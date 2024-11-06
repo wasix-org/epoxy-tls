@@ -2,10 +2,7 @@ use std::str::FromStr;
 
 use fastwebsockets::CloseCode;
 use log::debug;
-use tokio::{
-	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-	select,
-};
+use tokio::{io::BufReader, select};
 use uuid::Uuid;
 use wisp_mux::{ConnectPacket, StreamType};
 

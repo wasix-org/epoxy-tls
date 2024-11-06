@@ -7,7 +7,7 @@ use wisp_mux::extensions::cert::VerifyKey;
 pub async fn get_certificates_from_paths(paths: Vec<PathBuf>) -> anyhow::Result<Vec<VerifyKey>> {
 	let mut out = Vec::new();
 	for path in paths {
-		let data = tokio::fs::read_to_string(path).await?;
+		let data = String::from_utf8(monoio::fs::read(path).await?)?;
 		let verifier = VerifyingKey::from_public_key_pem(&data)?;
 		let binary_key = verifier.to_bytes();
 

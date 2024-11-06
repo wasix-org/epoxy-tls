@@ -10,18 +10,16 @@ use cfg_if::cfg_if;
 use event_listener::Event;
 use futures_util::FutureExt;
 use log::{debug, trace};
-use tokio::{
-	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-	select,
-	task::JoinSet,
+use monoio::{
+	io::{AsyncReadRent, AsyncWriteRentExt, Splitable},
+	net::tcp::{TcpOwnedReadHalf, TcpOwnedWriteHalf},
+	task::JoinHandle,
 	time::interval,
 };
-use tokio_util::compat::FuturesAsyncReadCompatExt;
+use tokio::select;
 use uuid::Uuid;
 use wisp_mux::{
-	ws::Payload, CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite,
-	ServerMux,
+	ws::Payload, CloseReason, ConnectPacket, MuxStream, MuxStreamRead, MuxStreamWrite, ServerMux,
 };
 
 use crate::{
@@ -30,39 +28,26 @@ use crate::{
 	CLIENTS, CONFIG,
 };
 
-async fn copy_read_fast(
-	muxrx: MuxStreamAsyncRead,
-	mut tcptx: OwnedWriteHalf,
-) -> std::io::Result<()> {
-	let mut muxrx = muxrx.compat();
-	loop {
-		let buf = muxrx.fill_buf().await?;
-		if buf.is_empty() {
-			tcptx.flush().await?;
-			return Ok(());
-		}
-
-		let i = tcptx.write(buf).await?;
-		if i == 0 {
-			return Err(std::io::ErrorKind::WriteZero.into());
-		}
-
-		muxrx.consume(i);
+async fn copy_read_fast(rx: MuxStreamRead, mut tx: TcpOwnedWriteHalf) -> anyhow::Result<()> {
+	let mut res;
+	while let Some(x) = rx.read().await? {
+		(res, _) = tx.write_all(x).await;
+		res?;
 	}
+
+	Ok(())
 }
 
-async fn copy_write_fast(muxtx: MuxStreamWrite, tcprx: OwnedReadHalf) -> anyhow::Result<()> {
-	let mut tcprx = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
+async fn copy_write_fast(tx: MuxStreamWrite, mut rx: TcpOwnedReadHalf) -> anyhow::Result<()> {
+	let mut buf = Vec::with_capacity(CONFIG.stream.buffer_size);
+	let mut res;
 	loop {
-		let buf = tcprx.fill_buf().await?;
-
-		let len = buf.len();
-		if len == 0 {
-			return Ok(());
+		(res, buf) = rx.read(buf).await;
+		let cnt = res?;
+		if cnt == 0 {
+			break Ok(());
 		}
-
-		muxtx.write(&buf).await?;
-		tcprx.consume(len);
+		tx.write_payload(Payload::Borrowed(&buf[0..cnt])).await?;
 	}
 }
 
@@ -122,7 +107,6 @@ async fn handle_stream(
 
 				let ret: anyhow::Result<()> = async {
 					let (muxread, muxwrite) = muxstream.into_split();
-					let muxread = muxread.into_stream().into_asyncread();
 					let (tcpread, tcpwrite) = stream.into_split();
 					select! {
 						x = copy_read_fast(muxread, tcpwrite) => x?,
@@ -145,21 +129,32 @@ async fn handle_stream(
 				let closer = muxstream.get_close_handle();
 
 				let ret: anyhow::Result<()> = async move {
-					let mut data = vec![0u8; 65507];
-					loop {
-						select! {
-							size = stream.recv(&mut data) => {
-								let size = size?;
-								muxstream.write(&data[..size]).await?;
-							}
-							data = muxstream.read() => {
-								if let Some(data) = data? {
-									stream.send(&data).await?;
-								} else {
-									break Ok(());
-								}
+					let read = async {
+						let mut data = vec![0u8; 65507];
+						let mut ret;
+						loop {
+							(ret, data) = stream.recv(data).await;
+							let size = ret?;
+							if size != 0 {
+								muxstream
+									.write_payload(Payload::Borrowed(&data[..size]))
+									.await?;
+							} else {
+								break Ok(());
 							}
 						}
+					};
+					let write = async {
+						let mut ret;
+						while let Some(data) = muxstream.read().await? {
+							(ret, _) = stream.send(data).await;
+							ret?;
+						}
+						Ok(())
+					};
+					select! {
+						x = read => x,
+						x = write => x,
 					}
 				}
 				.await;
@@ -254,18 +249,18 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		mux.downgraded
 	);
 
-	let mut set: JoinSet<()> = JoinSet::new();
+	let mut set: Vec<JoinHandle<()>> = Vec::new();
 	let event: Arc<Event> = Event::new().into();
 
 	let mux_id = id.clone();
-	set.spawn(tokio::task::unconstrained(fut.map(move |x| {
+	set.push(monoio::spawn(fut.map(move |x| {
 		debug!("wisp client id {:?} multiplexor result {:?}", mux_id, x)
 	})));
 
 	let ping_mux = mux.clone();
 	let ping_event = event.clone();
 	let ping_id = id.clone();
-	set.spawn(async move {
+	set.push(monoio::spawn(async move {
 		let mut interval = interval(Duration::from_secs(30));
 		while ping_mux
 			.send_ping(Payload::Bytes(BytesMut::new()))
@@ -278,17 +273,17 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 				_ = ping_event.listen() => break,
 			};
 		}
-	});
+	}));
 
 	while let Some((connect, stream)) = mux.server_new_stream().await {
-		set.spawn(handle_stream(
+		set.push(monoio::spawn(handle_stream(
 			connect,
 			stream,
 			id.clone(),
 			event.clone(),
 			#[cfg(feature = "twisp")]
 			twisp_map.clone(),
-		));
+		)));
 	}
 
 	debug!("shutting down wisp client id {:?}", id);
@@ -298,7 +293,9 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 
 	trace!("waiting for tasks to close for wisp client id {:?}", id);
 
-	while set.join_next().await.is_some() {}
+	for task in set {
+		task.await;
+	}
 
 	debug!("wisp client id {:?} disconnected", id);
 

@@ -9,8 +9,8 @@ use cfg_if::cfg_if;
 use fastwebsockets::{FragmentCollector, Frame, OpCode, Payload, WebSocketError};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
+use monoio::net::{udp::UdpSocket, TcpStream};
 use regex::RegexSet;
-use tokio::net::{TcpStream, UdpSocket};
 use wisp_mux::{ConnectPacket, StreamType};
 
 use crate::{CONFIG, RESOLVER};
@@ -175,7 +175,7 @@ impl ClientStream {
 					SocketAddr::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(), 0)
 				};
 
-				let stream = UdpSocket::bind(bind_addr).await?;
+				let stream = UdpSocket::bind(bind_addr)?;
 
 				stream
 					.connect(SocketAddr::new(ipaddr, packet.destination_port))

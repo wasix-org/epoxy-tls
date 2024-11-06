@@ -2,11 +2,14 @@
 #![deny(clippy::todo)]
 #![allow(unexpected_cfgs)]
 
-use std::{fs::read_to_string, net::IpAddr};
+use std::{
+	fs::read_to_string,
+	net::{IpAddr, ToSocketAddrs},
+};
 
 use anyhow::Context;
 use clap::Parser;
-use config::{validate_config_cache, Cli, Config, RuntimeFlavor};
+use config::{validate_config_cache, Cli, Config};
 use dashmap::DashMap;
 use handle::{handle_wisp, handle_wsproxy};
 use hickory_resolver::{
@@ -17,12 +20,9 @@ use hickory_resolver::{
 use lazy_static::lazy_static;
 use listener::ServerListener;
 use log::{error, info, trace, warn};
+use monoio::{time::TimeDriver, IoUringDriver, RuntimeBuilder};
 use route::{route_stats, ServerRouteResult};
 use stats::generate_stats;
-use tokio::{
-	runtime,
-	signal::unix::{signal, SignalKind},
-};
 use uuid::Uuid;
 use wisp_mux::ConnectPacket;
 
@@ -43,10 +43,11 @@ pub enum Resolver {
 
 impl Resolver {
 	pub async fn resolve(&self, host: String) -> anyhow::Result<Box<dyn Iterator<Item = IpAddr>>> {
+		// TODO this uses sync
 		match self {
 			Self::Hickory(resolver) => Ok(Box::new(resolver.lookup_ip(host).await?.into_iter())),
 			Self::System => Ok(Box::new(
-				tokio::net::lookup_host(host + ":0").await?.map(|x| x.ip()),
+				(host.as_str(), 0).to_socket_addrs()?.map(|x| x.ip()),
 			)),
 		}
 	}
@@ -76,6 +77,7 @@ lazy_static! {
 	};
 	pub static ref CLIENTS: DashMap<String, Client> = DashMap::new();
 	pub static ref RESOLVER: Resolver = {
+		return Resolver::System;
 		if CONFIG.stream.dns_servers.is_empty() {
 			if let Ok((config, opts)) = read_system_conf() {
 				Resolver::Hickory(TokioAsyncResolver::tokio(config, opts))
@@ -110,28 +112,22 @@ fn main() -> anyhow::Result<()> {
 		.parse_default_env()
 		.init();
 
-	let mut builder: runtime::Builder = match CONFIG.server.runtime {
-		RuntimeFlavor::SingleThread => runtime::Builder::new_current_thread(),
-		RuntimeFlavor::MultiThread => runtime::Builder::new_multi_thread(),
-		#[cfg(tokio_unstable)]
-		RuntimeFlavor::MultiThreadAlt => runtime::Builder::new_multi_thread_alt(),
-	};
-
-	builder.enable_all();
-	let rt = builder.build()?;
+	let builder = RuntimeBuilder::<TimeDriver<IoUringDriver>>::new();
+	let mut rt = builder.build().context("failed to create monoio driver")?;
 
 	rt.block_on(async {
 		validate_config_cache().await;
 
 		info!(
-			"listening on {:?} with runtime flavor {:?} and socket transport {:?}",
-			CONFIG.server.bind, CONFIG.server.runtime, CONFIG.server.transport
+			"listening on {:?} with socket transport {:?}",
+			CONFIG.server.bind, CONFIG.server.transport
 		);
 
 		trace!("CLI: {:#?}", &*CLI);
 		trace!("CONFIG: {:#?}", &*CONFIG);
 		trace!("RESOLVER: {:?}", &*RESOLVER);
 
+		/*
 		tokio::spawn(async {
 			let mut sig = signal(SignalKind::user_defined1()).unwrap();
 			while sig.recv().await.is_some() {
@@ -141,6 +137,7 @@ fn main() -> anyhow::Result<()> {
 				}
 			}
 		});
+		*/
 
 		let mut listener = ServerListener::new(&CONFIG.server.bind)
 			.await
@@ -157,7 +154,7 @@ fn main() -> anyhow::Result<()> {
 				format!("failed to bind to address {} for stats server", bind_addr.1)
 			})?;
 
-			tokio::spawn(async move {
+			monoio::spawn(async move {
 				loop {
 					match stats_listener.accept().await {
 						Ok((stream, _)) => {
@@ -180,7 +177,7 @@ fn main() -> anyhow::Result<()> {
 			let stats_endpoint = stats_endpoint.clone();
 			match listener.accept().await {
 				Ok((stream, client_id)) => {
-					tokio::spawn(async move {
+					monoio::spawn(async move {
 						let res = route::route(stream, stats_endpoint, move |stream, maybe_ip| {
 							let client_id = if let Some(ip) = maybe_ip {
 								format!("{} ({})", client_id, ip)
@@ -205,7 +202,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn handle_stream(stream: ServerRouteResult, id: String) {
-	tokio::spawn(async move {
+	monoio::spawn(async move {
 		CLIENTS.insert(id.clone(), (DashMap::new(), false));
 		let res = match stream {
 			ServerRouteResult::Wisp(stream, is_v2) => handle_wisp(stream, is_v2, id.clone()).await,

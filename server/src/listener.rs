@@ -1,18 +1,24 @@
 use std::{
+	fs::remove_file,
 	io::{BufReader, Cursor},
-	os::fd::AsFd,
+	os::fd::{AsRawFd, BorrowedFd},
 	path::PathBuf,
 	pin::Pin,
 	sync::Arc,
 };
 
 use anyhow::Context;
-use rustls_pemfile::{certs, private_key};
-use tokio::{
-	fs::{remove_file, try_exists, File},
-	io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
-	net::{tcp, unix, TcpListener, TcpStream, UnixListener, UnixStream},
+use monoio::{
+	fs::{File, OpenOptions},
+	io::Splitable,
+	net::{
+		tcp::{TcpListener, TcpOwnedReadHalf, TcpOwnedWriteHalf, TcpStream},
+		unix::{UnixListener, UnixOwnedReadHalf, UnixOwnedWriteHalf, UnixStream},
+	},
 };
+use monoio_compat::StreamWrapper;
+use rustls_pemfile::{certs, private_key};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 use tokio_rustls::{rustls, server::TlsStream, TlsAcceptor};
 use uuid::Uuid;
 
@@ -157,6 +163,8 @@ impl<
 	}
 }
 
+unsafe impl<A, B, C, D, E> Send for Quintet<A, B, C, D, E> {}
+
 pub struct Duplex<A, B>(A, B);
 
 impl<A, B> Duplex<A, B> {
@@ -228,21 +236,26 @@ impl<A: Unpin, B: AsyncWrite + Unpin> AsyncWrite for Duplex<A, B> {
 	}
 }
 
-pub type ServerStream =
-	Quintet<TcpStream, TlsStream<TcpStream>, UnixStream, TlsStream<UnixStream>, Duplex<File, File>>;
+pub type ServerStream = Quintet<
+	StreamWrapper<TcpStream>,
+	TlsStream<StreamWrapper<TcpStream>>,
+	StreamWrapper<UnixStream>,
+	TlsStream<StreamWrapper<UnixStream>>,
+	Duplex<StreamWrapper<File>, StreamWrapper<File>>,
+>;
 pub type ServerStreamRead = Quintet<
-	tcp::OwnedReadHalf,
-	ReadHalf<TlsStream<TcpStream>>,
-	unix::OwnedReadHalf,
-	ReadHalf<TlsStream<UnixStream>>,
-	File,
+	StreamWrapper<TcpOwnedReadHalf>,
+	ReadHalf<TlsStream<StreamWrapper<TcpStream>>>,
+	StreamWrapper<UnixOwnedReadHalf>,
+	ReadHalf<TlsStream<StreamWrapper<UnixStream>>>,
+	StreamWrapper<File>,
 >;
 pub type ServerStreamWrite = Quintet<
-	tcp::OwnedWriteHalf,
-	WriteHalf<TlsStream<TcpStream>>,
-	unix::OwnedWriteHalf,
-	WriteHalf<TlsStream<UnixStream>>,
-	File,
+	StreamWrapper<TcpOwnedWriteHalf>,
+	WriteHalf<TlsStream<StreamWrapper<TcpStream>>>,
+	StreamWrapper<UnixOwnedWriteHalf>,
+	WriteHalf<TlsStream<StreamWrapper<UnixStream>>>,
+	StreamWrapper<File>,
 >;
 
 pub trait ServerStreamExt {
@@ -253,16 +266,22 @@ impl ServerStreamExt for ServerStream {
 	fn split(self) -> (ServerStreamRead, ServerStreamWrite) {
 		match self {
 			Self::One(x) => {
-				let (r, w) = x.into_split();
-				(Quintet::One(r), Quintet::One(w))
+				let (r, w) = x.into_inner().into_split();
+				(
+					Quintet::One(StreamWrapper::new(r)),
+					Quintet::One(StreamWrapper::new(w)),
+				)
 			}
 			Self::Two(x) => {
 				let (r, w) = tokio::io::split(x);
 				(Quintet::Two(r), Quintet::Two(w))
 			}
 			Self::Three(x) => {
-				let (r, w) = x.into_split();
-				(Quintet::Three(r), Quintet::Three(w))
+				let (r, w) = x.into_inner().into_split();
+				(
+					Quintet::Three(StreamWrapper::new(r)),
+					Quintet::Three(StreamWrapper::new(w)),
+				)
 			}
 			Self::Four(x) => {
 				let (r, w) = tokio::io::split(x);
@@ -287,13 +306,13 @@ pub enum ServerListener {
 impl ServerListener {
 	async fn bind_tcp(bind: &BindAddr) -> anyhow::Result<TcpListener> {
 		TcpListener::bind(&bind.1)
-			.await
 			.with_context(|| format!("failed to bind to tcp address `{}`", bind.1))
 	}
 
 	async fn bind_unix(bind: &BindAddr) -> anyhow::Result<UnixListener> {
-		if try_exists(&bind.1).await? {
-			remove_file(&bind.1).await?;
+		todo!("this uses sync");
+		if PathBuf::from(&bind.1).try_exists()? {
+			remove_file(&bind.1)?;
 		}
 		UnixListener::bind(&bind.1)
 			.with_context(|| format!("failed to bind to unix socket at `{}`", bind.1))
@@ -307,7 +326,7 @@ impl ServerListener {
 			.context("no tls keypair provided")?;
 
 		let mut public = BufReader::new(Cursor::new(
-			tokio::fs::read(&tls_keypair[0])
+			monoio::fs::read(&tls_keypair[0])
 				.await
 				.context("failed to read public key")?,
 		));
@@ -315,7 +334,7 @@ impl ServerListener {
 			.collect::<Result<Vec<_>, _>>()
 			.context("failed to parse public key")?;
 		let mut private = BufReader::new(Cursor::new(
-			tokio::fs::read(&tls_keypair[1])
+			monoio::fs::read(&tls_keypair[1])
 				.await
 				.context("failed to read private key")?,
 		));
@@ -379,25 +398,25 @@ impl ServerListener {
 		match self {
 			Self::Tcp(x) => {
 				let (x, y) = Self::accept_tcp(x).await?;
-				Ok((Quintet::One(x), y))
+				Ok((Quintet::One(StreamWrapper::new(x)), y))
 			}
 			Self::TlsTcp(tcp, tls) => {
 				let (x, y) = Self::accept_tcp(tcp).await?;
-				let x = tls.accept(x).await?;
+				let x = tls.accept(StreamWrapper::new(x)).await?;
 				Ok((Quintet::Two(x), y))
 			}
 			Self::Unix(x) => {
 				let (x, y) = Self::accept_unix(x).await?;
-				Ok((Quintet::Three(x), y))
+				Ok((Quintet::Three(StreamWrapper::new(x)), y))
 			}
 			Self::TlsUnix(unix, tls) => {
 				let (x, y) = Self::accept_unix(unix).await?;
-				let x = tls.accept(x).await?;
+				let x = tls.accept(StreamWrapper::new(x)).await?;
 				Ok((Quintet::Four(x), y))
 			}
 			Self::File(path) => {
 				if let Some(path) = path.take() {
-					let rx = File::options()
+					let rx = OpenOptions::new()
 						.read(true)
 						.write(false)
 						.open(&path)
@@ -405,19 +424,20 @@ impl ServerListener {
 						.context("failed to open read file")?;
 
 					if CONFIG.server.file_raw_mode {
-						let mut termios = nix::sys::termios::tcgetattr(rx.as_fd())
+						let fd = unsafe { BorrowedFd::borrow_raw(rx.as_raw_fd()) };
+						let mut termios = nix::sys::termios::tcgetattr(fd)
 							.context("failed to get termios for read file")?
 							.clone();
 						nix::sys::termios::cfmakeraw(&mut termios);
 						nix::sys::termios::tcsetattr(
-							rx.as_fd(),
+							fd,
 							nix::sys::termios::SetArg::TCSANOW,
 							&termios,
 						)
 						.context("failed to set raw mode for read file")?;
 					}
 
-					let tx = File::options()
+					let tx = OpenOptions::new()
 						.read(false)
 						.write(true)
 						.open(&path)
@@ -425,12 +445,13 @@ impl ServerListener {
 						.context("failed to open write file")?;
 
 					if CONFIG.server.file_raw_mode {
-						let mut termios = nix::sys::termios::tcgetattr(tx.as_fd())
+						let fd = unsafe { BorrowedFd::borrow_raw(tx.as_raw_fd()) };
+						let mut termios = nix::sys::termios::tcgetattr(fd)
 							.context("failed to get termios for write file")?
 							.clone();
 						nix::sys::termios::cfmakeraw(&mut termios);
 						nix::sys::termios::tcsetattr(
-							tx.as_fd(),
+							fd,
 							nix::sys::termios::SetArg::TCSANOW,
 							&termios,
 						)
@@ -438,7 +459,7 @@ impl ServerListener {
 					}
 
 					Ok((
-						Quintet::Five(Duplex::new(rx, tx)),
+						Quintet::Five(Duplex::new(StreamWrapper::new(rx), StreamWrapper::new(tx))),
 						path.to_string_lossy().to_string(),
 					))
 				} else {
