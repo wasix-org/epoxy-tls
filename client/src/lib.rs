@@ -6,7 +6,6 @@ use std::{error::Error, pin::Pin, str::FromStr, sync::Arc};
 use async_compression::futures::bufread as async_comp;
 use bytes::{Bytes, BytesMut};
 use cfg_if::cfg_if;
-#[cfg(feature = "full")]
 use futures_util::future::Either;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use http::{
@@ -22,7 +21,6 @@ use http_body::Body;
 use http_body_util::{BodyDataStream, Full};
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
-#[cfg(feature = "full")]
 use io_stream::{iostream_from_asyncrw, iostream_from_stream};
 use js_sys::{Array, ArrayBuffer, Function, Object, Promise, Uint8Array};
 use send_wrapper::SendWrapper;
@@ -38,7 +36,6 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{ResponseInit, Url, WritableStream};
 #[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
-#[cfg(feature = "full")]
 use wisp_mux::StreamType;
 use wisp_mux::{
 	generic::GenericWebSocketRead,
@@ -47,7 +44,6 @@ use wisp_mux::{
 };
 use ws_wrapper::WebSocketWrapper;
 
-#[cfg(feature = "full")]
 mod io_stream;
 mod stream_provider;
 mod tokioio;
@@ -487,7 +483,6 @@ impl EpoxyClient {
 		EpoxyWebSocket::connect(self, handlers, url, protocols, headers, &self.user_agent).await
 	}
 
-	#[cfg(feature = "full")]
 	pub async fn connect_tcp(&self, url: EpoxyUrlInput) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
@@ -502,7 +497,6 @@ impl EpoxyClient {
 		))
 	}
 
-	#[cfg(feature = "full")]
 	pub async fn connect_tls(&self, url: EpoxyUrlInput) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
@@ -517,7 +511,6 @@ impl EpoxyClient {
 		))
 	}
 
-	#[cfg(feature = "full")]
 	pub async fn connect_udp(&self, url: EpoxyUrlInput) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
