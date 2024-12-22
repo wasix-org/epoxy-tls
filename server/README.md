@@ -1,13 +1,11 @@
 # `epoxy-server`
-Performant server implementation of the Wisp protocol in Rust, made for epoxy.
+Performant server implementation of the Wisp protocol in Rust, made for epoxy-client.
 
 You can view a recent flamegraph of the server under load [here](flamegraph.svg?raw=true).
 
 ## Building
-> [!IMPORTANT]
-> Rust nightly is required.
 
-```
+```bash
 cargo b -r
 ```
 The executable will be placed at `target/release/epoxy-server`.
