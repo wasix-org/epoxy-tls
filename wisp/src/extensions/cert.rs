@@ -10,10 +10,7 @@ use ed25519::{
 	Signature,
 };
 
-use crate::{
-	ws::{DynWebSocketRead, LockingWebSocketWrite},
-	Role, WispError,
-};
+use crate::{Role, WispError};
 
 use super::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder};
 
@@ -145,13 +142,6 @@ impl ProtocolExtension for CertAuthProtocolExtension {
 		Self::ID
 	}
 
-	fn get_supported_packets(&self) -> &'static [u8] {
-		&[]
-	}
-	fn get_congestion_stream_types(&self) -> &'static [u8] {
-		&[]
-	}
-
 	fn encode(&self) -> Bytes {
 		match self {
 			Self::Server {
@@ -178,24 +168,6 @@ impl ProtocolExtension for CertAuthProtocolExtension {
 			}
 			Self::ServerVerified | Self::ClientRecieved => Bytes::new(),
 		}
-	}
-
-	async fn handle_handshake(
-		&mut self,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError> {
-		Ok(())
-	}
-
-	async fn handle_packet(
-		&mut self,
-		_: u8,
-		_: Bytes,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError> {
-		Ok(())
 	}
 
 	fn box_clone(&self) -> Box<dyn ProtocolExtension + Sync + Send> {

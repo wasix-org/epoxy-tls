@@ -12,14 +12,18 @@ use std::{
 };
 
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 
 use crate::{
-	ws::{DynWebSocketRead, LockingWebSocketWrite},
+	ws::{PayloadMut, WebSocketRead, WebSocketWrite},
 	Role, WispError,
 };
 
-/// Type-erased protocol extension that implements Clone.
+mod private {
+	pub struct Sealed;
+}
+
+/// Type-erased protocol extension.
 #[derive(Debug)]
 pub struct AnyProtocolExtension(Box<dyn ProtocolExtension>);
 
@@ -64,14 +68,12 @@ impl Clone for AnyProtocolExtension {
 	}
 }
 
-impl From<AnyProtocolExtension> for Bytes {
-	fn from(value: AnyProtocolExtension) -> Self {
-		let mut bytes = BytesMut::with_capacity(5);
-		let payload = value.encode();
-		bytes.put_u8(value.get_id());
-		bytes.put_u32_le(payload.len() as u32);
-		bytes.extend(payload);
-		bytes.freeze()
+impl AnyProtocolExtension {
+	pub(crate) fn encode_into(&self, packet: &mut PayloadMut) {
+		let payload = self.encode();
+		packet.put_u8(self.get_id());
+		packet.put_u32_le(payload.len() as u32);
+		packet.extend(payload);
 	}
 }
 
@@ -92,11 +94,15 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 	/// Get the protocol extension's supported packets.
 	///
 	/// Used to decide whether to call the protocol extension's packet handler.
-	fn get_supported_packets(&self) -> &'static [u8];
+	fn get_supported_packets(&self) -> &'static [u8] {
+		&[]
+	}
 	/// Get stream types that should be treated as TCP.
 	///
 	/// Used to decide whether to handle congestion control for that stream type.
-	fn get_congestion_stream_types(&self) -> &'static [u8];
+	fn get_congestion_stream_types(&self) -> &'static [u8] {
+		&[]
+	}
 
 	/// Encode self into Bytes.
 	fn encode(&self) -> Bytes;
@@ -106,24 +112,31 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 	/// This should be used to send or receive data before any streams are created.
 	async fn handle_handshake(
 		&mut self,
-		read: &mut DynWebSocketRead,
-		write: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError>;
+		read: &mut dyn WebSocketRead,
+		write: &mut dyn WebSocketWrite,
+	) -> Result<(), WispError> {
+		let _ = (read, write);
+		Ok(())
+	}
 
 	/// Handle receiving a packet.
 	async fn handle_packet(
 		&mut self,
 		packet_type: u8,
 		packet: Bytes,
-		read: &mut DynWebSocketRead,
-		write: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError>;
+		read: &mut dyn WebSocketRead,
+		write: &mut dyn WebSocketWrite,
+	) -> Result<(), WispError> {
+		let _ = (packet_type, packet, read, write);
+		Ok(())
+	}
 
 	/// Clone the protocol extension.
 	fn box_clone(&self) -> Box<dyn ProtocolExtension + Sync + Send>;
 
+	#[doc(hidden)]
 	/// Do not override.
-	fn __internal_type_id(&self) -> TypeId {
+	fn __internal_type_id(&self, _: private::Sealed) -> TypeId {
 		TypeId::of::<Self>()
 	}
 }
@@ -131,7 +144,7 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 impl dyn ProtocolExtension {
 	fn __is<T: ProtocolExtension>(&self) -> bool {
 		let t = TypeId::of::<T>();
-		self.__internal_type_id() == t
+		self.__internal_type_id(private::Sealed) == t
 	}
 
 	fn __downcast<T: ProtocolExtension>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
@@ -183,8 +196,9 @@ pub trait ProtocolExtensionBuilder: Sync + Send + 'static {
 	/// This is called first on the server and second on the client.
 	fn build_to_extension(&mut self, role: Role) -> Result<AnyProtocolExtension, WispError>;
 
+	#[doc(hidden)]
 	/// Do not override.
-	fn __internal_type_id(&self) -> TypeId {
+	fn __internal_type_id(&self, _sealed: private::Sealed) -> TypeId {
 		TypeId::of::<Self>()
 	}
 }
@@ -192,7 +206,7 @@ pub trait ProtocolExtensionBuilder: Sync + Send + 'static {
 impl dyn ProtocolExtensionBuilder {
 	fn __is<T: ProtocolExtensionBuilder>(&self) -> bool {
 		let t = TypeId::of::<T>();
-		self.__internal_type_id() == t
+		self.__internal_type_id(private::Sealed) == t
 	}
 
 	fn __downcast<T: ProtocolExtensionBuilder>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
@@ -267,49 +281,78 @@ impl<T: ProtocolExtensionBuilder> From<T> for AnyProtocolExtensionBuilder {
 	}
 }
 
-/// Helper functions for `Vec<AnyProtocolExtensionBuilder>`
-pub trait ProtocolExtensionBuilderVecExt {
+/// Helper functions for `[AnyProtocolExtensionBuilder]`
+pub trait ProtocolExtensionBuilderListExt {
 	/// Returns a reference to the protocol extension builder specified, if it was found.
 	fn find_extension<T: ProtocolExtensionBuilder>(&self) -> Option<&T>;
 	/// Returns a mutable reference to the protocol extension builder specified, if it was found.
 	fn find_extension_mut<T: ProtocolExtensionBuilder>(&mut self) -> Option<&mut T>;
+}
 
+/// Helper functions for `Vec<AnyProtocolExtensionBuilder>`
+pub trait ProtocolExtensionBuilderVecExt {
 	/// Removes any instances of the protocol extension builder specified, if it was found.
 	fn remove_extension<T: ProtocolExtensionBuilder>(&mut self);
 }
 
-impl ProtocolExtensionBuilderVecExt for Vec<AnyProtocolExtensionBuilder> {
+impl ProtocolExtensionBuilderListExt for [AnyProtocolExtensionBuilder] {
 	fn find_extension<T: ProtocolExtensionBuilder>(&self) -> Option<&T> {
 		self.iter().find_map(|x| x.downcast_ref::<T>())
 	}
 	fn find_extension_mut<T: ProtocolExtensionBuilder>(&mut self) -> Option<&mut T> {
 		self.iter_mut().find_map(|x| x.downcast_mut::<T>())
 	}
+}
 
+impl ProtocolExtensionBuilderListExt for Vec<AnyProtocolExtensionBuilder> {
+	fn find_extension<T: ProtocolExtensionBuilder>(&self) -> Option<&T> {
+		self.as_slice().find_extension()
+	}
+	fn find_extension_mut<T: ProtocolExtensionBuilder>(&mut self) -> Option<&mut T> {
+		self.as_mut_slice().find_extension_mut()
+	}
+}
+
+impl ProtocolExtensionBuilderVecExt for Vec<AnyProtocolExtensionBuilder> {
 	fn remove_extension<T: ProtocolExtensionBuilder>(&mut self) {
 		self.retain(|x| x.downcast_ref::<T>().is_none());
 	}
 }
 
-/// Helper functions for `Vec<AnyProtocolExtension>`
-pub trait ProtocolExtensionVecExt {
+/// Helper functions for `[AnyProtocolExtension]`
+pub trait ProtocolExtensionListExt {
 	/// Returns a reference to the protocol extension specified, if it was found.
 	fn find_extension<T: ProtocolExtension>(&self) -> Option<&T>;
 	/// Returns a mutable reference to the protocol extension specified, if it was found.
 	fn find_extension_mut<T: ProtocolExtension>(&mut self) -> Option<&mut T>;
+}
 
+/// Helper functions for `Vec<AnyProtocolExtension>`
+pub trait ProtocolExtensionVecExt {
 	/// Removes any instances of the protocol extension specified, if it was found.
 	fn remove_extension<T: ProtocolExtension>(&mut self);
 }
 
-impl ProtocolExtensionVecExt for Vec<AnyProtocolExtension> {
+impl ProtocolExtensionListExt for [AnyProtocolExtension] {
 	fn find_extension<T: ProtocolExtension>(&self) -> Option<&T> {
 		self.iter().find_map(|x| x.downcast_ref::<T>())
 	}
 	fn find_extension_mut<T: ProtocolExtension>(&mut self) -> Option<&mut T> {
 		self.iter_mut().find_map(|x| x.downcast_mut::<T>())
 	}
+}
 
+impl ProtocolExtensionListExt for Vec<AnyProtocolExtension> {
+	fn find_extension<T: ProtocolExtension>(&self) -> Option<&T> {
+		self.as_slice().find_extension()
+	}
+
+	fn find_extension_mut<T: ProtocolExtension>(&mut self) -> Option<&mut T> {
+		self.as_mut_slice().find_extension_mut()
+	}
+}
+
+impl ProtocolExtensionVecExt for Vec<AnyProtocolExtension> {
 	fn remove_extension<T: ProtocolExtension>(&mut self) {
 		self.retain(|x| x.downcast_ref::<T>().is_none());
 	}

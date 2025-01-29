@@ -9,7 +9,7 @@ use std::{
 
 use futures_util::ready;
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
 pin_project! {
 	pub struct Chain<T, U> {
@@ -97,5 +97,37 @@ where
 		} else {
 			me.second.consume(amt)
 		}
+	}
+}
+impl<T, U> AsyncWrite for Chain<T, U>
+where
+	U: AsyncWrite,
+{
+	fn poll_write(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &[u8],
+	) -> Poll<Result<usize, io::Error>> {
+		self.project().second.poll_write(cx, buf)
+	}
+
+	fn poll_write_vectored(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		bufs: &[io::IoSlice<'_>],
+	) -> Poll<Result<usize, io::Error>> {
+		self.project().second.poll_write_vectored(cx, bufs)
+	}
+
+	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+		self.project().second.poll_flush(cx)
+	}
+
+	fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+		self.project().second.poll_shutdown(cx)
+	}
+
+	fn is_write_vectored(&self) -> bool {
+		self.second.is_write_vectored()
 	}
 }

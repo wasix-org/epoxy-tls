@@ -1,13 +1,12 @@
 #![feature(let_chains, impl_trait_in_assoc_type)]
 
-use std::{error::Error, pin::Pin, str::FromStr, sync::Arc};
+use std::{error::Error, str::FromStr, sync::Arc};
 
 #[cfg(feature = "full")]
 use async_compression::futures::bufread as async_comp;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use cfg_if::cfg_if;
-use futures_util::future::Either;
-use futures_util::{Stream, StreamExt, TryStreamExt};
+use futures_util::{future::Either, StreamExt, TryStreamExt};
 use http::{
 	header::{
 		InvalidHeaderName, InvalidHeaderValue, ACCEPT_ENCODING, CONNECTION, CONTENT_LENGTH,
@@ -24,7 +23,10 @@ use hyper_util_wasm::client::legacy::Client;
 use io_stream::{iostream_from_asyncrw, iostream_from_stream};
 use js_sys::{Array, ArrayBuffer, Function, Object, Promise, Uint8Array};
 use send_wrapper::SendWrapper;
-use stream_provider::{ProviderWispTransportGenerator, StreamProvider, StreamProviderService};
+use stream_provider::{
+	ProviderWispTransportGenerator, ProviderWispTransportRead, ProviderWispTransportWrite,
+	StreamProvider, StreamProviderService,
+};
 use thiserror::Error;
 use utils::{
 	asyncread_to_readablestream, convert_streaming_body, entries_of_object, from_entries,
@@ -36,11 +38,9 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{ResponseInit, Url, WritableStream};
 #[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
-use wisp_mux::StreamType;
 use wisp_mux::{
-	generic::GenericWebSocketRead,
-	ws::{EitherWebSocketRead, EitherWebSocketWrite},
-	CloseReason,
+	packet::{CloseReason, StreamType},
+	WispError,
 };
 use ws_wrapper::WebSocketWrapper;
 
@@ -341,29 +341,31 @@ fn create_wisp_transport(function: Function) -> ProviderWispTransportGenerator {
 			}
 			.into();
 
-			let read = GenericWebSocketRead::new(Box::pin(SendWrapper::new(
+			let read = Box::pin(SendWrapper::new(
 				wasm_streams::ReadableStream::from_raw(object_get(&transport, "read").into())
-					.into_stream()
+					.try_into_stream()
+					.map_err(|x| EpoxyError::wisp_transport(x.0.into()))?
 					.map(|x| {
-						let pkt = x.map_err(EpoxyError::wisp_transport)?;
+						let pkt = x
+							.map_err(EpoxyError::wisp_transport)
+							.map_err(|x| WispError::WsImplError(Box::new(x)))?;
 						let arr: ArrayBuffer = pkt.dyn_into().map_err(|x| {
-							EpoxyError::InvalidWispTransportPacket(format!("{x:?}"))
+							WispError::WsImplError(Box::new(
+								EpoxyError::InvalidWispTransportPacket(format!("{x:?}")),
+							))
 						})?;
-						Ok::<BytesMut, EpoxyError>(BytesMut::from(
-							Uint8Array::new(&arr).to_vec().as_slice(),
-						))
+						Ok::<Bytes, WispError>(Bytes::from(Uint8Array::new(&arr).to_vec()))
 					}),
-			))
-				as Pin<Box<dyn Stream<Item = Result<BytesMut, EpoxyError>> + Send>>);
-			let write: WritableStream = object_get(&transport, "write").into();
-			let write = WispTransportWrite {
-				inner: SendWrapper::new(write.get_writer().map_err(EpoxyError::wisp_transport)?),
-			};
+			)) as ProviderWispTransportRead;
 
-			Ok((
-				EitherWebSocketRead::Right(read),
-				EitherWebSocketWrite::Right(write),
-			))
+			let write: WritableStream = object_get(&transport, "write").into();
+			let write = Box::pin(WispTransportWrite(
+				wasm_streams::WritableStream::from_raw(write)
+					.try_into_sink()
+					.map_err(|x| EpoxyError::wisp_transport(x.0.into()))?,
+			)) as ProviderWispTransportWrite;
+
+			Ok((read, write))
 		}))
 	})
 }
@@ -419,10 +421,7 @@ impl EpoxyClient {
 								));
 							}
 						}
-						Ok((
-							EitherWebSocketRead::Left(read),
-							EitherWebSocketWrite::Left(write),
-						))
+						Ok((read.into_read(), write.into_write()))
 					})
 				}),
 				&options,

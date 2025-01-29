@@ -24,7 +24,7 @@ use tokio::{
 	sync::Mutex,
 };
 use uuid::Uuid;
-use wisp_mux::ConnectPacket;
+use wisp_mux::packet::ConnectPacket;
 
 pub mod config;
 #[doc(hidden)]
@@ -41,6 +41,8 @@ mod stream;
 mod upgrade;
 #[doc(hidden)]
 mod util_chain;
+#[doc(hidden)]
+mod util_map_err;
 
 #[doc(hidden)]
 type Client = (Mutex<HashMap<Uuid, (ConnectPacket, ConnectPacket)>>, String);

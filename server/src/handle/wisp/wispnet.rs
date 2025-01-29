@@ -6,17 +6,19 @@ use std::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use futures_util::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use log::debug;
 use tokio::{select, sync::Mutex};
 use uuid::Uuid;
 use wisp_mux::{
 	extensions::{
-		AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder, ProtocolExtensionVecExt,
+		AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder, ProtocolExtensionListExt,
 	},
-	ws::{DynWebSocketRead, Frame, LockingWebSocketWrite, Payload},
-	ClientMux, CloseReason, ConnectPacket, MuxStream, MuxStreamRead, MuxStreamWrite, Role,
-	WispError, WispV2Handshake,
+	packet::{CloseReason, ConnectPacket},
+	stream::{MuxStream, MuxStreamRead, MuxStreamWrite},
+	ws::{WebSocketRead, WebSocketWrite},
+	ClientMux, Role, WispError, WispV2Handshake,
 };
 
 use crate::{
@@ -96,8 +98,8 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 
 	async fn handle_handshake(
 		&mut self,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
+		_: &mut dyn WebSocketRead,
+		_: &mut dyn WebSocketWrite,
 	) -> Result<(), WispError> {
 		Ok(())
 	}
@@ -106,15 +108,16 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 		&mut self,
 		packet_type: u8,
 		mut packet: Bytes,
-		_: &mut DynWebSocketRead,
-		write: &dyn LockingWebSocketWrite,
+		_: &mut dyn WebSocketRead,
+		write: &mut dyn WebSocketWrite,
 	) -> Result<(), WispError> {
 		if packet_type == Self::ID {
 			if packet.remaining() < 4 {
 				return Err(WispError::PacketTooSmall);
 			}
-			if packet.get_u32_le() != 0 {
-				return Err(WispError::InvalidStreamId);
+			let id = packet.get_u32_le();
+			if id != 0 {
+				return Err(WispError::InvalidStreamId(id));
 			}
 
 			let mut out = BytesMut::new();
@@ -129,9 +132,7 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 			}
 			drop(locked);
 
-			write
-				.wisp_write_frame(Frame::binary(Payload::Bytes(out)))
-				.await?;
+			write.send(out.into()).await?;
 		}
 		Ok(())
 	}
@@ -145,11 +146,7 @@ pub async fn route_wispnet(server: u32, packet: ConnectPacket) -> Result<ClientS
 	if let Some(server) = WISPNET_SERVERS.lock().await.get(&server) {
 		let stream = server
 			.mux
-			.client_new_stream(
-				packet.stream_type,
-				packet.destination_hostname,
-				packet.destination_port,
-			)
+			.new_stream(packet.stream_type, packet.host, packet.port)
 			.await
 			.context("failed to connect to wispnet server")?;
 		Ok(ClientStream::Wispnet(stream, server.id.clone()))
@@ -159,16 +156,18 @@ pub async fn route_wispnet(server: u32, packet: ConnectPacket) -> Result<ClientS
 }
 
 async fn copy_wisp(
-	rx: MuxStreamRead<WispStreamWrite>,
-	tx: MuxStreamWrite<WispStreamWrite>,
+	mut rx: MuxStreamRead<WispStreamWrite>,
+	mut tx: MuxStreamWrite<WispStreamWrite>,
 	#[cfg(feature = "speed-limit")] limiter: async_speed_limit::Limiter<
 		async_speed_limit::clock::StandardClock,
 	>,
 ) -> Result<()> {
-	while let Some(data) = rx.read().await? {
+	while let Some(data) = rx.next().await {
+		let data = data?;
+
 		#[cfg(feature = "speed-limit")]
 		limiter.consume(data.len()).await;
-		tx.write_payload(Payload::Borrowed(data.as_ref())).await?;
+		tx.send(data).await?;
 	}
 	Ok(())
 }
@@ -219,7 +218,7 @@ pub async fn handle_wispnet(stream: WispResult, id: String) -> Result<()> {
 	let extensions = vec![WispnetServerProtocolExtensionBuilder(net_id).into()];
 
 	let (mux, fut) = Box::pin(
-		ClientMux::create(read, write, Some(WispV2Handshake::new(extensions)))
+		ClientMux::new(read, write, Some(WispV2Handshake::new(extensions)))
 			.await
 			.context("failed to create client multiplexor")?
 			.with_required_extensions(&[WispnetServerProtocolExtension::ID]),
@@ -228,7 +227,7 @@ pub async fn handle_wispnet(stream: WispResult, id: String) -> Result<()> {
 	.context("wispnet client did not have wispnet extension")?;
 
 	let is_private = mux
-		.supported_extensions
+		.get_extensions()
 		.find_extension::<WispnetServerProtocolExtension>()
 		.context("failed to find wispnet extension")?
 		.1;

@@ -1,407 +1,183 @@
-mod compat;
-mod sink_unfold;
-pub use compat::*;
-
-use crate::{
-	inner::WsEvent,
-	ws::{Frame, LockedWebSocketWrite, Payload, WebSocketWrite},
-	AtomicCloseReason, CloseReason, Packet, Role, StreamType, WispError,
-};
-
-use bytes::{BufMut, Bytes, BytesMut};
-use event_listener::Event;
-use flume as mpsc;
-use futures::{channel::oneshot, select, stream, FutureExt, Sink, Stream};
 use std::{
 	pin::Pin,
-	sync::{
-		atomic::{AtomicBool, AtomicU32, Ordering},
-		Arc,
-	},
+	sync::Arc,
+	task::{ready, Context, Poll},
 };
 
-/// Read side of a multiplexor stream.
-pub struct MuxStreamRead<W: WebSocketWrite + 'static> {
-	/// ID of the stream.
-	pub stream_id: u32,
-	/// Type of the stream.
-	pub stream_type: StreamType,
+use futures::{channel::oneshot, FutureExt, Sink, SinkExt, Stream, StreamExt};
 
-	role: Role,
+use crate::{
+	mux::inner::{FlowControl, StreamInfo, WsEvent},
+	packet::{ClosePacket, CloseReason, Packet},
+	ws::{Payload, WebSocketWrite},
+	LockedWebSocketWrite, WispError,
+};
 
-	tx: LockedWebSocketWrite<W>,
-	rx: mpsc::Receiver<Payload<'static>>,
+mod compat;
+mod handles;
+pub use compat::*;
+pub use handles::*;
 
-	is_closed: Arc<AtomicBool>,
-	is_closed_event: Arc<Event>,
-	close_reason: Arc<AtomicCloseReason>,
-
-	should_flow_control: bool,
-	flow_control: Arc<AtomicU32>,
-	flow_control_read: AtomicU32,
-	target_flow_control: u32,
+macro_rules! unlock_some {
+	($unlock:expr, $x:expr) => {
+		if let Err(err) = $x {
+			$unlock.unlock();
+			return Poll::Ready(Some(Err(err)));
+		}
+	};
+}
+macro_rules! unlock {
+	($unlock:expr, $x:expr) => {
+		if let Err(err) = $x {
+			$unlock.unlock();
+			return Poll::Ready(Err(err));
+		}
+	};
 }
 
-impl<W: WebSocketWrite + 'static> MuxStreamRead<W> {
-	/// Read an event from the stream.
-	pub async fn read(&self) -> Result<Option<Payload<'static>>, WispError> {
-		if self.rx.is_empty() && self.is_closed.load(Ordering::Acquire) {
-			return Ok(None);
-		}
-		let bytes = select! {
-			x = self.rx.recv_async() => x.map_err(|_| WispError::MuxMessageFailedToRecv)?,
-			() = self.is_closed_event.listen().fuse() => return Ok(None)
-		};
-		if self.role == Role::Server && self.should_flow_control {
-			let val = self.flow_control_read.fetch_add(1, Ordering::AcqRel) + 1;
-			if val > self.target_flow_control && !self.is_closed.load(Ordering::Acquire) {
-				self.tx
-					.write_frame(
-						Packet::new_continue(
-							self.stream_id,
-							self.flow_control.fetch_add(val, Ordering::AcqRel) + val,
-						)
-						.into(),
-					)
-					.await?;
-				self.flow_control_read.store(0, Ordering::Release);
-			}
-		}
-		Ok(Some(bytes))
-	}
+pub struct MuxStreamRead<W: WebSocketWrite> {
+	inner: flume::r#async::RecvStream<'static, Payload>,
+	write: LockedWebSocketWrite<W>,
+	info: Arc<StreamInfo>,
 
-	pub(crate) fn into_inner_stream(
-		self,
-	) -> Pin<Box<dyn Stream<Item = Result<Payload<'static>, WispError>> + Send>> {
-		Box::pin(stream::unfold(self, |rx| async move {
-			Some((rx.read().await.transpose()?, rx))
-		}))
-	}
-
-	/// Turn the read half into one that implements futures `Stream`, consuming it.
-	pub fn into_stream(self) -> MuxStreamIoStream {
-		MuxStreamIoStream {
-			close_reason: self.close_reason.clone(),
-			is_closed: self.is_closed.clone(),
-			rx: self.into_inner_stream(),
-		}
-	}
-
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		if self.is_closed.load(Ordering::Acquire) {
-			Some(self.close_reason.load(Ordering::Acquire))
-		} else {
-			None
-		}
-	}
+	read_cnt: u32,
+	chunk: Option<Payload>,
 }
 
-/// Write side of a multiplexor stream.
-pub struct MuxStreamWrite<W: WebSocketWrite + 'static> {
-	/// ID of the stream.
-	pub stream_id: u32,
-	/// Type of the stream.
-	pub stream_type: StreamType,
-
-	role: Role,
-	mux_tx: mpsc::Sender<WsEvent<W>>,
-	tx: LockedWebSocketWrite<W>,
-
-	is_closed: Arc<AtomicBool>,
-	close_reason: Arc<AtomicCloseReason>,
-
-	continue_recieved: Arc<Event>,
-	should_flow_control: bool,
-	flow_control: Arc<AtomicU32>,
-}
-
-impl<W: WebSocketWrite + 'static> MuxStreamWrite<W> {
-	pub(crate) async fn write_payload_internal<'a>(
-		&self,
-		header: Frame<'static>,
-		body: Frame<'a>,
-	) -> Result<(), WispError> {
-		if self.role == Role::Client
-			&& self.should_flow_control
-			&& self.flow_control.load(Ordering::Acquire) == 0
-		{
-			self.continue_recieved.listen().await;
-		}
-		if self.is_closed.load(Ordering::Acquire) {
-			return Err(WispError::StreamAlreadyClosed);
-		}
-
-		self.tx.write_split(header, body).await?;
-
-		if self.role == Role::Client && self.stream_type == StreamType::Tcp {
-			self.flow_control.store(
-				self.flow_control.load(Ordering::Acquire).saturating_sub(1),
-				Ordering::Release,
-			);
-		}
-		Ok(())
-	}
-
-	/// Write a payload to the stream.
-	pub async fn write_payload(&self, data: Payload<'_>) -> Result<(), WispError> {
-		let frame: Frame<'static> = Frame::from(Packet::new_data(
-			self.stream_id,
-			Payload::Bytes(BytesMut::new()),
-		));
-		self.write_payload_internal(frame, Frame::binary(data))
-			.await
-	}
-
-	/// Write data to the stream.
-	pub async fn write<D: AsRef<[u8]>>(&self, data: D) -> Result<(), WispError> {
-		self.write_payload(Payload::Borrowed(data.as_ref())).await
-	}
-
-	/// Get a handle to close the connection.
-	///
-	/// Useful to close the connection without having access to the stream.
-	///
-	/// # Example
-	/// ```
-	/// let handle = stream.get_close_handle();
-	/// if let Err(error) = handle_stream(stream) {
-	///     handle.close(0x01);
-	/// }
-	/// ```
-	pub fn get_close_handle(&self) -> MuxStreamCloser<W> {
-		MuxStreamCloser {
-			stream_id: self.stream_id,
-			close_channel: self.mux_tx.clone(),
-			is_closed: self.is_closed.clone(),
-			close_reason: self.close_reason.clone(),
-		}
-	}
-
-	/// Get a protocol extension stream to send protocol extension packets.
-	pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream<W> {
-		MuxProtocolExtensionStream {
-			stream_id: self.stream_id,
-			tx: self.tx.clone(),
-			is_closed: self.is_closed.clone(),
-		}
-	}
-
-	/// Close the stream. You will no longer be able to write or read after this has been called.
-	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
-		if self.is_closed.load(Ordering::Acquire) {
-			return Err(WispError::StreamAlreadyClosed);
-		}
-		self.is_closed.store(true, Ordering::Release);
-
-		let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
-		self.mux_tx
-			.send_async(WsEvent::Close(
-				Packet::new_close(self.stream_id, reason),
-				tx,
-			))
-			.await
-			.map_err(|_| WispError::MuxMessageFailedToSend)?;
-		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
-
-		Ok(())
-	}
-
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		if self.is_closed.load(Ordering::Acquire) {
-			Some(self.close_reason.load(Ordering::Acquire))
-		} else {
-			None
-		}
-	}
-
-	pub(crate) fn into_inner_sink(
-		self,
-	) -> Pin<Box<dyn Sink<Payload<'static>, Error = WispError> + Send>> {
-		let handle = self.get_close_handle();
-		Box::pin(sink_unfold::unfold(
-			self,
-			|tx, data| async move {
-				tx.write_payload(data).await?;
-				Ok(tx)
-			},
-			handle,
-			|handle| async move {
-				handle.close(CloseReason::Unknown).await?;
-				Ok(handle)
-			},
-		))
-	}
-
-	/// Turn the write half into one that implements futures `Sink`, consuming it.
-	pub fn into_sink(self) -> MuxStreamIoSink {
-		MuxStreamIoSink {
-			close_reason: self.close_reason.clone(),
-			is_closed: self.is_closed.clone(),
-			tx: self.into_inner_sink(),
-		}
-	}
-}
-
-impl<W: WebSocketWrite + 'static> Drop for MuxStreamWrite<W> {
-	fn drop(&mut self) {
-		if !self.is_closed.load(Ordering::Acquire) {
-			self.is_closed.store(true, Ordering::Release);
-			let (tx, _) = oneshot::channel();
-			let _ = self.mux_tx.send(WsEvent::Close(
-				Packet::new_close(self.stream_id, CloseReason::Unknown),
-				tx,
-			));
-		}
-	}
-}
-
-/// Multiplexor stream.
-pub struct MuxStream<W: WebSocketWrite + 'static> {
-	/// ID of the stream.
-	pub stream_id: u32,
-	rx: MuxStreamRead<W>,
-	tx: MuxStreamWrite<W>,
-}
-
-impl<W: WebSocketWrite + 'static> MuxStream<W> {
-	#[allow(clippy::too_many_arguments)]
-	pub(crate) fn new(
-		stream_id: u32,
-		role: Role,
-		stream_type: StreamType,
-		rx: mpsc::Receiver<Payload<'static>>,
-		mux_tx: mpsc::Sender<WsEvent<W>>,
-		tx: LockedWebSocketWrite<W>,
-		is_closed: Arc<AtomicBool>,
-		is_closed_event: Arc<Event>,
-		close_reason: Arc<AtomicCloseReason>,
-		should_flow_control: bool,
-		flow_control: Arc<AtomicU32>,
-		continue_recieved: Arc<Event>,
-		target_flow_control: u32,
+impl<W: WebSocketWrite> MuxStreamRead<W> {
+	fn new(
+		inner: flume::Receiver<Payload>,
+		write: LockedWebSocketWrite<W>,
+		info: Arc<StreamInfo>,
 	) -> Self {
 		Self {
-			stream_id,
-			rx: MuxStreamRead {
-				stream_id,
-				stream_type,
-				role,
+			inner: inner.into_stream(),
+			write,
+			info,
 
-				tx: tx.clone(),
-				rx,
-
-				is_closed: is_closed.clone(),
-				is_closed_event,
-				close_reason: close_reason.clone(),
-
-				should_flow_control,
-				flow_control: flow_control.clone(),
-				flow_control_read: AtomicU32::new(0),
-				target_flow_control,
-			},
-			tx: MuxStreamWrite {
-				stream_id,
-				stream_type,
-				role,
-
-				mux_tx,
-				tx,
-
-				is_closed,
-				close_reason,
-
-				continue_recieved,
-				should_flow_control,
-				flow_control,
-			},
+			chunk: None,
+			read_cnt: 0,
 		}
 	}
 
-	/// Read an event from the stream.
-	pub async fn read(&self) -> Result<Option<Payload<'static>>, WispError> {
-		self.rx.read().await
+	pub fn get_stream_id(&self) -> u32 {
+		self.info.id
 	}
 
-	/// Write a payload to the stream.
-	pub async fn write_payload(&self, data: Payload<'_>) -> Result<(), WispError> {
-		self.tx.write_payload(data).await
-	}
-
-	/// Write data to the stream.
-	pub async fn write<D: AsRef<[u8]>>(&self, data: D) -> Result<(), WispError> {
-		self.tx.write(data).await
-	}
-
-	/// Get a handle to close the connection.
-	///
-	/// Useful to close the connection without having access to the stream.
-	///
-	/// # Example
-	/// ```
-	/// let handle = stream.get_close_handle();
-	/// if let Err(error) = handle_stream(stream) {
-	///     handle.close(0x01);
-	/// }
-	/// ```
-	pub fn get_close_handle(&self) -> MuxStreamCloser<W> {
-		self.tx.get_close_handle()
-	}
-
-	/// Get a protocol extension stream to send protocol extension packets.
-	pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream<W> {
-		self.tx.get_protocol_extension_stream()
-	}
-
-	/// Get the stream's close reason, if it was closed.
 	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		self.rx.get_close_reason()
+		self.inner.is_disconnected().then(|| self.info.get_reason())
 	}
 
-	/// Close the stream. You will no longer be able to write or read after this has been called.
-	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
-		self.tx.close(reason).await
+	pub fn into_async_read(self) -> MuxStreamAsyncRead<W> {
+		MuxStreamAsyncRead::new(self)
 	}
+}
 
-	/// Split the stream into read and write parts, consuming it.
-	pub fn into_split(self) -> (MuxStreamRead<W>, MuxStreamWrite<W>) {
-		(self.rx, self.tx)
+impl<W: WebSocketWrite> Stream for MuxStreamRead<W> {
+	type Item = Result<Payload, WispError>;
+
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		if self.inner.is_disconnected() {
+			return Poll::Ready(None);
+		}
+
+		let was_reading = self.chunk.is_some();
+		let chunk = if let Some(chunk) = self.chunk.take() {
+			chunk
+		} else {
+			let Some(chunk) = ready!(self.inner.poll_next_unpin(cx)) else {
+				return Poll::Ready(None);
+			};
+			chunk
+		};
+
+		macro_rules! ready {
+			($x:expr) => {
+				match $x {
+					Poll::Ready(x) => x,
+					Poll::Pending => {
+						self.chunk = Some(chunk);
+						return Poll::Pending;
+					}
+				}
+			};
+		}
+
+		if self.info.flow_status == FlowControl::EnabledSendMessages {
+			if !was_reading {
+				self.read_cnt += 1;
+			}
+
+			if self.read_cnt > self.info.target_flow_control {
+				ready!(self.write.poll_lock(cx));
+				unlock_some!(self.write, ready!(self.write.get().poll_ready(cx)));
+				let pkt =
+					Packet::new_continue(self.info.id, self.info.flow_add(self.read_cnt)).encode();
+				unlock_some!(self.write, self.write.get().start_send(pkt));
+				self.write.unlock();
+
+				self.read_cnt = 0;
+			}
+		}
+
+		Poll::Ready(Some(Ok(chunk)))
 	}
+}
 
-	/// Turn the stream into one that implements futures `Stream + Sink`, consuming it.
-	pub fn into_io(self) -> MuxStreamIo {
-		MuxStreamIo {
-			rx: self.rx.into_stream(),
-			tx: self.tx.into_sink(),
+pub struct MuxStreamWrite<W: WebSocketWrite> {
+	inner: flume::r#async::SendSink<'static, WsEvent<W>>,
+	write: LockedWebSocketWrite<W>,
+	info: Arc<StreamInfo>,
+
+	chunk: Option<Payload>,
+
+	oneshot: Option<oneshot::Receiver<Result<(), WispError>>>,
+}
+
+impl<W: WebSocketWrite> MuxStreamWrite<W> {
+	fn new(
+		inner: flume::Sender<WsEvent<W>>,
+		write: LockedWebSocketWrite<W>,
+		info: Arc<StreamInfo>,
+	) -> Self {
+		Self {
+			inner: inner.into_sink(),
+			write,
+			info,
+
+			chunk: None,
+
+			oneshot: None,
 		}
 	}
-}
 
-/// Close handle for a multiplexor stream.
-#[derive(Clone)]
-pub struct MuxStreamCloser<W: WebSocketWrite + 'static> {
-	/// ID of the stream.
-	pub stream_id: u32,
-	close_channel: mpsc::Sender<WsEvent<W>>,
-	is_closed: Arc<AtomicBool>,
-	close_reason: Arc<AtomicCloseReason>,
-}
+	pub fn get_stream_id(&self) -> u32 {
+		self.info.id
+	}
 
-impl<W: WebSocketWrite + 'static> MuxStreamCloser<W> {
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.inner.is_disconnected().then(|| self.info.get_reason())
+	}
+
+	pub fn get_close_handle(&self) -> MuxStreamCloser<W> {
+		MuxStreamCloser {
+			info: self.info.clone(),
+			inner: self.inner.sender().clone(),
+		}
+	}
+
 	/// Close the stream. You will no longer be able to write or read after this has been called.
 	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
-		if self.is_closed.load(Ordering::Acquire) {
+		if self.inner.is_disconnected() {
 			return Err(WispError::StreamAlreadyClosed);
 		}
-		self.is_closed.store(true, Ordering::Release);
 
 		let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
-		self.close_channel
-			.send_async(WsEvent::Close(
-				Packet::new_close(self.stream_id, reason),
-				tx,
-			))
+		let evt = WsEvent::Close(self.info.id, ClosePacket { reason }, tx);
+
+		self.inner
+			.sender()
+			.send_async(evt)
 			.await
 			.map_err(|_| WispError::MuxMessageFailedToSend)?;
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
@@ -409,36 +185,170 @@ impl<W: WebSocketWrite + 'static> MuxStreamCloser<W> {
 		Ok(())
 	}
 
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		if self.is_closed.load(Ordering::Acquire) {
-			Some(self.close_reason.load(Ordering::Acquire))
+	pub fn into_async_write(self) -> MuxStreamAsyncWrite<W> {
+		MuxStreamAsyncWrite::new(self)
+	}
+
+	fn maybe_write(&mut self) -> Result<(), WispError> {
+		if let Some(chunk) = self.chunk.take() {
+			let packet = Packet::new_data(self.info.id, chunk).encode();
+			self.write.get().start_send(packet)?;
+
+			if self.info.flow_status == FlowControl::EnabledTrackAmount {
+				self.info.flow_dec();
+			}
+		}
+
+		Ok(())
+	}
+}
+
+impl<W: WebSocketWrite> Sink<Payload> for MuxStreamWrite<W> {
+	type Error = WispError;
+
+	fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		if self.inner.is_disconnected() {
+			return Poll::Ready(Err(WispError::StreamAlreadyClosed));
+		}
+
+		if self.info.flow_status == FlowControl::EnabledTrackAmount && self.info.flow_empty() {
+			self.info.flow_register(cx);
+			return Poll::Pending;
+		}
+
+		if self.chunk.is_some() {
+			ready!(self.write.poll_lock(cx));
+			unlock!(self.write, ready!(self.write.get().poll_ready(cx)));
+			unlock!(self.write, self.maybe_write());
+			self.write.unlock();
+		}
+
+		Poll::Ready(Ok(()))
+	}
+
+	fn start_send(mut self: Pin<&mut Self>, item: Payload) -> Result<(), Self::Error> {
+		debug_assert!(self.chunk.is_none());
+		self.chunk = Some(item);
+
+		Ok(())
+	}
+
+	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		ready!(self.write.poll_lock(cx));
+
+		if self.chunk.is_some() {
+			unlock!(self.write, ready!(self.write.get().poll_ready(cx)));
+			unlock!(self.write, self.maybe_write());
+		}
+		unlock!(self.write, ready!(self.write.get().poll_flush(cx)));
+
+		self.write.unlock();
+		Poll::Ready(Ok(()))
+	}
+
+	fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		if let Some(oneshot) = &mut self.oneshot {
+			let ret = ready!(oneshot.poll_unpin(cx));
+			self.oneshot.take();
+			Poll::Ready(ret.map_err(|_| WispError::MuxMessageFailedToSend)?)
 		} else {
-			None
+			ready!(self.as_mut().poll_flush(cx))?;
+
+			ready!(self.inner.poll_ready_unpin(cx))
+				.map_err(|_| WispError::MuxMessageFailedToSend)?;
+
+			let (tx, rx) = oneshot::channel();
+			self.oneshot = Some(rx);
+
+			let pkt = WsEvent::Close(
+				self.info.id,
+				ClosePacket {
+					reason: CloseReason::Unknown,
+				},
+				tx,
+			);
+
+			self.inner
+				.start_send_unpin(pkt)
+				.map_err(|_| WispError::MuxMessageFailedToSend)?;
+
+			Poll::Pending
 		}
 	}
 }
 
-/// Stream for sending arbitrary protocol extension packets.
-pub struct MuxProtocolExtensionStream<W: WebSocketWrite + 'static> {
-	/// ID of the stream.
-	pub stream_id: u32,
-	pub(crate) tx: LockedWebSocketWrite<W>,
-	pub(crate) is_closed: Arc<AtomicBool>,
+pub struct MuxStream<W: WebSocketWrite> {
+	read: MuxStreamRead<W>,
+	write: MuxStreamWrite<W>,
 }
 
-impl<W: WebSocketWrite + 'static> MuxProtocolExtensionStream<W> {
-	/// Send a protocol extension packet with this stream's ID.
-	pub async fn send(&self, packet_type: u8, data: Bytes) -> Result<(), WispError> {
-		if self.is_closed.load(Ordering::Acquire) {
-			return Err(WispError::StreamAlreadyClosed);
+impl<W: WebSocketWrite> MuxStream<W> {
+	pub(crate) fn new(
+		rx: flume::Receiver<Payload>,
+		tx: flume::Sender<WsEvent<W>>,
+		ws: LockedWebSocketWrite<W>,
+		info: Arc<StreamInfo>,
+	) -> Self {
+		Self {
+			read: MuxStreamRead::new(rx, ws.clone(), info.clone()),
+			write: MuxStreamWrite::new(tx, ws, info),
 		}
-		let mut encoded = BytesMut::with_capacity(1 + 4 + data.len());
-		encoded.put_u8(packet_type);
-		encoded.put_u32_le(self.stream_id);
-		encoded.extend(data);
-		self.tx
-			.write_frame(Frame::binary(Payload::Bytes(encoded)))
-			.await
+	}
+
+	pub fn get_stream_id(&self) -> u32 {
+		self.read.get_stream_id()
+	}
+
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.read.get_close_reason()
+	}
+
+	pub fn get_close_handle(&self) -> MuxStreamCloser<W> {
+		self.write.get_close_handle()
+	}
+
+	/// Close the stream. You will no longer be able to write or read after this has been called.
+	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
+		self.write.close(reason).await
+	}
+
+	pub fn into_async_rw(self) -> MuxStreamAsyncRW<W> {
+		MuxStreamAsyncRW::new(self)
+	}
+
+	pub fn into_split(self) -> (MuxStreamRead<W>, MuxStreamWrite<W>) {
+		(self.read, self.write)
+	}
+}
+
+impl<W: WebSocketWrite> Stream for MuxStream<W> {
+	type Item = <MuxStreamRead<W> as Stream>::Item;
+
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		self.read.poll_next_unpin(cx)
+	}
+
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		self.read.size_hint()
+	}
+}
+
+impl<W: WebSocketWrite> Sink<Payload> for MuxStream<W> {
+	type Error = <MuxStreamWrite<W> as Sink<Payload>>::Error;
+
+	fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.write.poll_ready_unpin(cx)
+	}
+
+	fn start_send(mut self: Pin<&mut Self>, item: Payload) -> Result<(), Self::Error> {
+		self.write.start_send_unpin(item)
+	}
+
+	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.write.poll_flush_unpin(cx)
+	}
+
+	fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.write.poll_close_unpin(cx)
 	}
 }

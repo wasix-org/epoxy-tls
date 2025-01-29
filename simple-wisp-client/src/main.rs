@@ -2,31 +2,25 @@ use atomic_counter::{AtomicCounter, RelaxedCounter};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::pkcs8::DecodePrivateKey;
-use fastwebsockets::{handshake, WebSocketWrite};
-use futures::{future::select_all, FutureExt, TryFutureExt};
-use http_body_util::Empty;
+use futures::{future::select_all, FutureExt, SinkExt};
 use humantime::format_duration;
-use hyper::{
-	header::{CONNECTION, UPGRADE},
-	Request, Uri,
-};
-use hyper_util::rt::TokioIo;
+use hyper::Uri;
 use sha2::{Digest, Sha256};
 use simple_moving_average::{SingleSumSMA, SMA};
 use std::{
 	error::Error,
 	future::Future,
-	io::{stdout, Cursor, IsTerminal, Write},
+	io::{stdout, IsTerminal, Write},
 	net::SocketAddr,
 	path::PathBuf,
 	pin::Pin,
-	process::{abort, exit},
-	sync::Arc,
+	sync::{
+		atomic::{AtomicUsize, Ordering},
+		Arc,
+	},
 	time::{Duration, Instant},
 };
 use tokio::{
-	io::AsyncReadExt,
-	net::{tcp::OwnedWriteHalf, TcpStream},
 	select,
 	signal::unix::{signal, SignalKind},
 	time::{interval, sleep},
@@ -37,43 +31,15 @@ use wisp_mux::{
 		motd::{MotdProtocolExtension, MotdProtocolExtensionBuilder},
 		password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
 		udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
-		AnyProtocolExtensionBuilder,
+		AnyProtocolExtensionBuilder, ProtocolExtensionListExt,
 	},
-	ClientMux, StreamType, WispError, WispV2Handshake,
+	packet::StreamType,
+	ws::{TokioWebsocketsTransport, WebSocketWrite, WebSocketExt},
+	ClientMux, WispError, WispV2Handshake,
 };
 
 #[global_allocator]
 static JEMALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-#[derive(Debug)]
-enum WispClientError {
-	InvalidUriScheme,
-	UriHasNoHost,
-}
-
-impl std::fmt::Display for WispClientError {
-	fn fmt(&self, fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-		use WispClientError as E;
-		match self {
-			E::InvalidUriScheme => write!(fmt, "Invalid URI scheme"),
-			E::UriHasNoHost => write!(fmt, "URI has no host"),
-		}
-	}
-}
-
-impl Error for WispClientError {}
-
-struct SpawnExecutor;
-
-impl<Fut> hyper::rt::Executor<Fut> for SpawnExecutor
-where
-	Fut: Future + Send + 'static,
-	Fut::Output: Send + 'static,
-{
-	fn execute(&self, fut: Fut) {
-		tokio::task::spawn(fut);
-	}
-}
 
 #[derive(Parser)]
 #[command(version = clap::crate_version!())]
@@ -132,19 +98,11 @@ async fn create_mux(
 	opts: &Cli,
 ) -> Result<
 	(
-		ClientMux<WebSocketWrite<OwnedWriteHalf>>,
+		ClientMux<impl WebSocketWrite>,
 		impl Future<Output = Result<(), WispError>> + Send,
 	),
 	Box<dyn Error + Send + Sync>,
 > {
-	if opts.wisp.scheme_str().unwrap_or_default() != "ws" {
-		Err(Box::new(WispClientError::InvalidUriScheme))?;
-	}
-
-	let addr = opts.wisp.host().ok_or(WispClientError::UriHasNoHost)?;
-	let addr_port = opts.wisp.port_u16().unwrap_or(80);
-	let addr_path = opts.wisp.path();
-
 	let auth = opts.auth.as_ref().map(|auth| {
 		let split: Vec<_> = auth.split(':').collect();
 		let username = split[0].to_string();
@@ -157,27 +115,13 @@ async fn create_mux(
 		opts.wisp, opts.packet_size, opts.tcp, opts.streams,
 	);
 
-	let socket = TcpStream::connect(format!("{}:{}", &addr, addr_port)).await?;
-	let req = Request::builder()
-		.method("GET")
-		.uri(addr_path)
-		.header("Host", addr)
-		.header(UPGRADE, "websocket")
-		.header(CONNECTION, "upgrade")
-		.header(
-			"Sec-WebSocket-Key",
-			fastwebsockets::handshake::generate_key(),
-		)
-		.header("Sec-WebSocket-Version", "13")
-		.body(Empty::<Bytes>::new())?;
-
-	let (ws, _) = handshake::client(&SpawnExecutor, req, socket).await?;
-
-	let (rx, tx) = ws.split(|x| {
-		let parts = x.into_inner().downcast::<TokioIo<TcpStream>>().unwrap();
-		let (r, w) = parts.io.into_inner().into_split();
-		(Cursor::new(parts.read_buf).chain(r), w)
-	});
+	let (rx, tx) = TokioWebsocketsTransport(
+		tokio_websockets::ClientBuilder::from_uri(opts.wisp.clone())
+			.connect()
+			.await?
+			.0,
+	)
+	.split_fast();
 
 	let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
 	let mut extension_ids: Vec<u8> = Vec::new();
@@ -204,12 +148,12 @@ async fn create_mux(
 	}
 
 	let (mux, fut) = if opts.wisp_v2 {
-		ClientMux::create(rx, tx, Some(WispV2Handshake::new(extensions)))
+		ClientMux::new(rx, tx, Some(WispV2Handshake::new(extensions)))
 			.await?
 			.with_required_extensions(extension_ids.as_slice())
 			.await?
 	} else {
-		ClientMux::create(rx, tx, None)
+		ClientMux::new(rx, tx, None)
 			.await?
 			.with_no_required_extensions()
 	};
@@ -228,14 +172,13 @@ async fn real_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	let (mux, fut) = create_mux(&opts).await?;
 
 	let motd_extension = mux
-		.supported_extensions
-		.iter()
-		.find_map(|x| x.downcast_ref::<MotdProtocolExtension>());
+		.get_extensions()
+		.find_extension::<MotdProtocolExtension>();
 
 	println!(
 		"connected and created ClientMux, was downgraded {}, extensions supported {:?}, motd {:?}\n\n",
-		mux.downgraded,
-		mux.supported_extensions
+		mux.was_downgraded(),
+		mux.get_extensions()
 			.iter()
 			.map(|x| x.get_id())
 			.collect::<Vec<_>>(),
@@ -244,40 +187,32 @@ async fn real_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 	let mut threads = Vec::with_capacity((opts.streams * 2) + 3);
 
-	threads.push(Box::pin(
-		tokio::spawn(fut)
-			.map_err(|x| WispError::Other(Box::new(x)))
-			.map(|x| x.and_then(|x| x)),
-	)
+	threads.push(Box::pin(tokio::spawn(fut).map(|x| x.unwrap()))
 		as Pin<Box<dyn Future<Output = Result<(), WispError>> + Send>>);
 
-	let payload = vec![0; 1024 * opts.packet_size];
+	let payload = Bytes::from(vec![0; 1024 * opts.packet_size]);
 
 	let cnt = Arc::new(RelaxedCounter::new(0));
+	let top = Arc::new(AtomicUsize::new(0));
 
 	let start_time = Instant::now();
 	for _ in 0..opts.streams {
-		let (cr, cw) = mux
-			.client_new_stream(StreamType::Tcp, addr_dest.clone(), addr_dest_port)
+		let (_, mut cw) = mux
+			.new_stream(StreamType::Tcp, addr_dest.clone(), addr_dest_port)
 			.await?
 			.into_split();
 		let cnt = cnt.clone();
 		let payload = payload.clone();
 		threads.push(Box::pin(async move {
-			while let Ok(()) = cw.write(&payload).await {
-				cnt.inc();
-			}
-			#[allow(unreachable_code)]
-			Ok::<(), WispError>(())
-		}));
-		threads.push(Box::pin(async move {
 			loop {
-				let _ = cr.read().await;
+				cw.feed(payload.clone()).await?;
+				cnt.inc();
 			}
 		}));
 	}
 
 	let cnt_avg = cnt.clone();
+	let top_avg = top.clone();
 	threads.push(Box::pin(async move {
         let mut interval = interval(Duration::from_millis(100));
         let mut avg: SingleSumSMA<usize, usize, 100> = SingleSumSMA::new();
@@ -303,15 +238,18 @@ async fn real_main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
             stdout().flush().unwrap();
             avg.add_sample(now - last_time);
+
+			let _ = top_avg.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+				(old < now - last_time).then(|| now - last_time)
+			});
+
             last_time = now;
         }
     }));
 
 	threads.push(Box::pin(async move {
-		let mut interrupt =
-			signal(SignalKind::interrupt()).map_err(|x| WispError::Other(Box::new(x)))?;
-		let mut terminate =
-			signal(SignalKind::terminate()).map_err(|x| WispError::Other(Box::new(x)))?;
+		let mut interrupt = signal(SignalKind::interrupt()).unwrap();
+		let mut terminate = signal(SignalKind::terminate()).unwrap();
 		select! {
 			_ = interrupt.recv() => (),
 			_ = terminate.recv() => (),
@@ -330,10 +268,7 @@ async fn real_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 	let duration_since = Instant::now().duration_since(start_time);
 
-	if let Err(err) = out.0? {
-		println!("\n\nerr: {:?}", err);
-		exit(1);
-	}
+	dbg!(out.0)??;
 
 	out.2.into_iter().for_each(|x| x.abort());
 
@@ -348,8 +283,15 @@ async fn real_main() -> Result<(), Box<dyn Error + Send + Sync>> {
 			format_duration(duration_since),
 			(cnt.get() * opts.packet_size) as u64 / duration_since.as_secs(),
 		);
+		let top = top.load(Ordering::Relaxed);
+		println!(
+			"top: {} packets of &[0; 1024 * {}] ({} KiB) sent in 100ms ({} KiB/s)",
+			top,
+			opts.packet_size,
+			top * opts.packet_size,
+			top * opts.packet_size * 10
+		);
 	}
 
-	// force everything to die
-	abort()
+	Ok(())
 }

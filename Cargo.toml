@@ -5,6 +5,7 @@ members = ["server", "client", "wisp", "simple-wisp-client"]
 [profile.release]
 lto = true
 debug = true
+strip = false
 panic = "abort"
 codegen-units = 1
 opt-level = 3

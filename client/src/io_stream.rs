@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures_util::{AsyncReadExt, AsyncWriteExt, Sink, SinkExt, Stream, TryStreamExt};
 use js_sys::{Object, Uint8Array};
 use wasm_bindgen::prelude::*;
@@ -14,7 +14,7 @@ use crate::{
 
 fn create_iostream(
 	stream: Pin<Box<dyn Stream<Item = Result<Bytes, EpoxyError>>>>,
-	sink: Pin<Box<dyn Sink<BytesMut, Error = EpoxyError>>>,
+	sink: Pin<Box<dyn Sink<Bytes, Error = EpoxyError>>>,
 ) -> EpoxyIoStream {
 	let read = ReadableStream::from_stream(
 		stream
@@ -27,7 +27,7 @@ fn create_iostream(
 			convert_body(x)
 				.await
 				.map_err(|_| EpoxyError::InvalidPayload)
-				.map(|x| BytesMut::from(x.0.to_vec().as_slice()))
+				.map(|x| Bytes::from(x.0.to_vec()))
 		})
 		.sink_map_err(Into::into),
 	)
@@ -50,7 +50,7 @@ pub fn iostream_from_asyncrw(asyncrw: ProviderAsyncRW, buffer_size: usize) -> Ep
 pub fn iostream_from_stream(stream: ProviderUnencryptedStream) -> EpoxyIoStream {
 	let (rx, tx) = stream.into_split();
 	create_iostream(
-		Box::pin(rx.map_ok(Bytes::from).map_err(EpoxyError::Io)),
-		Box::pin(tx.sink_map_err(EpoxyError::Io)),
+		Box::pin(rx.map_ok(Bytes::from).map_err(EpoxyError::Wisp)),
+		Box::pin(tx.sink_map_err(EpoxyError::Wisp)),
 	)
 }

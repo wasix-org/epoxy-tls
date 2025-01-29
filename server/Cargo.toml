@@ -8,16 +8,16 @@ workspace = true
 
 [dependencies]
 anyhow = "1.0.86"
-async-speed-limit = { version = "0.4.2", optional = true }
+async-speed-limit = { version = "0.4.2", optional = true, features = ["tokio"] }
 async-trait = "0.1.81"
 base64 = "0.22.1"
 bytes = "1.7.1"
 cfg-if = "1.0.0"
 clap = { version = "4.5.16", features = ["cargo", "derive"] }
+console-subscriber = { version = "0.4.1", optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["pem"] }
 env_logger = "0.11.5"
 event-listener = "5.3.1"
-fastwebsockets = { version = "0.8.0", features = ["unstable-split"] }
 futures-util = "0.3.30"
 hickory-resolver = "0.24.1"
 http-body-util = "0.1.2"
@@ -39,12 +39,13 @@ sha2 = "0.10.8"
 shell-words = { version = "1.1.0", optional = true }
 tikv-jemalloc-ctl = { version = "0.6.0", features = ["stats", "use_std"] }
 tikv-jemallocator = "0.6.0"
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { version = "1.43.0", features = ["full"] }
 tokio-rustls = { version = "0.26.0", features = ["ring", "tls12"], default-features = false }
 tokio-util = { version = "0.7.11", features = ["codec", "compat", "io-util", "net"] }
+tokio-websockets = { version = "0.11.1", features = ["server", "simd", "sha1_smol"] }
 toml = { version = "0.8.19", optional = true }
 uuid = { version = "1.10.0", features = ["v4"] }
-wisp-mux = { version = "*", path = "../wisp", features = ["fastwebsockets", "generic_stream", "certificate"] }
+wisp-mux = { version = "*", path = "../wisp", features = ["tokio-websockets", "certificate"] }
 
 [features]
 default = ["toml"]
@@ -54,6 +55,7 @@ toml = ["dep:toml"]
 
 twisp = ["dep:pty-process", "dep:libc", "dep:shell-words"]
 speed-limit = ["dep:async-speed-limit"]
+tokio-console = ["dep:console-subscriber"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.0", features = ["rustc"] }

@@ -5,10 +5,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 
-use crate::{
-	ws::{DynWebSocketRead, LockingWebSocketWrite},
-	Role, WispError,
-};
+use crate::{Role, WispError};
 
 use super::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder};
 
@@ -31,37 +28,11 @@ impl ProtocolExtension for MotdProtocolExtension {
 		Self::ID
 	}
 
-	fn get_supported_packets(&self) -> &'static [u8] {
-		&[]
-	}
-
-	fn get_congestion_stream_types(&self) -> &'static [u8] {
-		&[]
-	}
-
 	fn encode(&self) -> Bytes {
 		match self.role {
 			Role::Server => Bytes::from(self.motd.as_bytes().to_vec()),
 			Role::Client => Bytes::new(),
 		}
-	}
-
-	async fn handle_handshake(
-		&mut self,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError> {
-		Ok(())
-	}
-
-	async fn handle_packet(
-		&mut self,
-		_: u8,
-		_: Bytes,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError> {
-		Ok(())
 	}
 
 	fn box_clone(&self) -> Box<dyn ProtocolExtension + Sync + Send> {

@@ -1,6 +1,5 @@
 use std::{io::ErrorKind, pin::Pin, sync::Arc, task::Poll};
 
-use bytes::BytesMut;
 use cfg_if::cfg_if;
 use futures_rustls::{
 	rustls::{ClientConfig, RootCertStore},
@@ -9,38 +8,33 @@ use futures_rustls::{
 use futures_util::{
 	future::Either,
 	lock::{Mutex, MutexGuard},
-	AsyncRead, AsyncWrite, Future, Stream,
+	AsyncRead, AsyncWrite, Future,
 };
 use hyper_util_wasm::client::legacy::connect::{ConnectSvc, Connected, Connection};
 use pin_project_lite::pin_project;
+use send_wrapper::SendWrapper;
 use wasm_bindgen_futures::spawn_local;
 use webpki_roots::TLS_SERVER_ROOTS;
 use wisp_mux::{
 	extensions::{udp::UdpProtocolExtensionBuilder, AnyProtocolExtensionBuilder},
-	generic::GenericWebSocketRead,
-	ws::{EitherWebSocketRead, EitherWebSocketWrite},
-	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType, WispV2Handshake,
+	packet::StreamType,
+	stream::{MuxStream, MuxStreamAsyncRW},
+	ws::{WebSocketRead, WebSocketWrite},
+	ClientMux, WispV2Handshake,
 };
 
 use crate::{
 	console_error, console_log,
-	utils::{IgnoreCloseNotify, NoCertificateVerification, WispTransportWrite},
-	ws_wrapper::{WebSocketReader, WebSocketWrapper},
+	utils::{IgnoreCloseNotify, NoCertificateVerification},
 	EpoxyClientOptions, EpoxyError,
 };
 
-pub type ProviderUnencryptedStream = MuxStreamIo;
-pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW;
+pub type ProviderUnencryptedStream = MuxStream<ProviderWispTransportWrite>;
+pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW<ProviderWispTransportWrite>;
 pub type ProviderTlsAsyncRW = IgnoreCloseNotify;
 pub type ProviderAsyncRW = Either<ProviderTlsAsyncRW, ProviderUnencryptedAsyncRW>;
-pub type ProviderWispTransportRead = EitherWebSocketRead<
-	WebSocketReader,
-	GenericWebSocketRead<
-		Pin<Box<dyn Stream<Item = Result<BytesMut, EpoxyError>> + Send>>,
-		EpoxyError,
-	>,
->;
-pub type ProviderWispTransportWrite = EitherWebSocketWrite<WebSocketWrapper, WispTransportWrite>;
+pub type ProviderWispTransportRead = Pin<Box<dyn WebSocketRead>>;
+pub type ProviderWispTransportWrite = Pin<Box<dyn WebSocketWrite>>;
 pub type ProviderWispTransportGenerator = Box<
 	dyn Fn(
 			bool,
@@ -137,7 +131,7 @@ impl StreamProvider {
 
 		let (read, write) = (self.wisp_generator)(self.wisp_v2).await?;
 
-		let client = ClientMux::create(read, write, extensions).await?;
+		let client = ClientMux::new(read, write, extensions).await?;
 		let (mux, fut) = if self.udp_extension {
 			client.with_udp_extension_required().await?
 		} else {
@@ -172,8 +166,8 @@ impl StreamProvider {
 		Box::pin(async {
 			let locked = self.current_client.lock().await;
 			if let Some(mux) = locked.as_ref() {
-				let stream = mux.client_new_stream(stream_type, host, port).await?;
-				Ok(stream.into_io())
+				let stream = mux.new_stream(stream_type, host, port).await?;
+				Ok(stream)
 			} else {
 				self.create_client(locked).await?;
 				self.get_stream(stream_type, host, port).await
@@ -191,7 +185,7 @@ impl StreamProvider {
 		Ok(self
 			.get_stream(stream_type, host, port)
 			.await?
-			.into_asyncrw())
+			.into_async_rw())
 	}
 
 	pub async fn get_tls_stream(
@@ -316,34 +310,37 @@ impl Connection for HyperIo {
 #[derive(Clone)]
 pub struct StreamProviderService(pub Arc<StreamProvider>);
 
+impl StreamProviderService {
+	async fn connect(self, req: hyper::Uri) -> Result<HyperIo, EpoxyError> {
+		let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme(None))?;
+		let host = req.host().ok_or(EpoxyError::NoUrlHost)?.to_string();
+		let port = req.port_u16().map_or_else(
+			|| match scheme {
+				"https" | "wss" => Ok(443),
+				"http" | "ws" => Ok(80),
+				_ => Err(EpoxyError::NoUrlPort),
+			},
+			Ok,
+		)?;
+		Ok(HyperIo {
+			inner: match scheme {
+				"https" => Either::Left(self.0.get_tls_stream(host, port, true).await?),
+				"wss" => Either::Left(self.0.get_tls_stream(host, port, false).await?),
+				"http" | "ws" => {
+					Either::Right(self.0.get_asyncread(StreamType::Tcp, host, port).await?)
+				}
+				_ => return Err(EpoxyError::InvalidUrlScheme(Some(scheme.to_string()))),
+			},
+		})
+	}
+}
+
 impl ConnectSvc for StreamProviderService {
 	type Connection = HyperIo;
 	type Error = EpoxyError;
-	type Future = Pin<Box<impl Future<Output = Result<Self::Connection, Self::Error>>>>;
+	type Future = impl Future<Output = Result<Self::Connection, Self::Error>> + Send;
 
 	fn connect(self, req: hyper::Uri) -> Self::Future {
-		let provider = self.0.clone();
-		Box::pin(async move {
-			let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme(None))?;
-			let host = req.host().ok_or(EpoxyError::NoUrlHost)?.to_string();
-			let port = req.port_u16().map_or_else(
-				|| match scheme {
-					"https" | "wss" => Ok(443),
-					"http" | "ws" => Ok(80),
-					_ => Err(EpoxyError::NoUrlPort),
-				},
-				Ok,
-			)?;
-			Ok(HyperIo {
-				inner: match scheme {
-					"https" => Either::Left(provider.get_tls_stream(host, port, true).await?),
-					"wss" => Either::Left(provider.get_tls_stream(host, port, false).await?),
-					"http" | "ws" => {
-						Either::Right(provider.get_asyncread(StreamType::Tcp, host, port).await?)
-					}
-					_ => return Err(EpoxyError::InvalidUrlScheme(Some(scheme.to_string()))),
-				},
-			})
-		})
+		SendWrapper::new(Box::pin(self.connect(req)))
 	}
 }

@@ -14,9 +14,12 @@ use wisp_mux::{
 		AnyProtocolExtension, AnyProtocolExtensionBuilder, ProtocolExtension,
 		ProtocolExtensionBuilder,
 	},
-	ws::{DynWebSocketRead, LockingWebSocketWrite},
-	MuxStreamAsyncRead, MuxStreamAsyncWrite, WispError,
+	stream::{MuxStreamAsyncRead, MuxStreamAsyncWrite},
+	ws::{WebSocketRead, WebSocketWrite},
+	WispError,
 };
+
+use crate::route::WispStreamWrite;
 
 pub type TwispMap = Arc<Mutex<HashMap<u32, RawFd>>>;
 
@@ -50,8 +53,8 @@ impl ProtocolExtension for TWispServerProtocolExtension {
 
 	async fn handle_handshake(
 		&mut self,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
+		_: &mut dyn WebSocketRead,
+		_: &mut dyn WebSocketWrite,
 	) -> std::result::Result<(), WispError> {
 		Ok(())
 	}
@@ -60,8 +63,8 @@ impl ProtocolExtension for TWispServerProtocolExtension {
 		&mut self,
 		packet_type: u8,
 		mut packet: Bytes,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
+		_: &mut dyn WebSocketRead,
+		_: &mut dyn WebSocketWrite,
 	) -> std::result::Result<(), WispError> {
 		if packet_type == 0xF0 {
 			if packet.remaining() < 4 + 2 + 2 {
@@ -126,8 +129,8 @@ pub fn new_ext(map: TwispMap) -> AnyProtocolExtensionBuilder {
 
 pub async fn handle_twisp(
 	id: u32,
-	streamrx: &mut MuxStreamAsyncRead,
-	streamtx: &mut MuxStreamAsyncWrite,
+	streamrx: &mut MuxStreamAsyncRead<WispStreamWrite>,
+	streamtx: &mut MuxStreamAsyncWrite<WispStreamWrite>,
 	map: TwispMap,
 	mut pty: Pty,
 	mut cmd: Child,

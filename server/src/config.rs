@@ -324,7 +324,7 @@ impl Default for ServerConfig {
 			bind: (SocketType::default(), "127.0.0.1:4000".to_string()),
 			transport: SocketTransport::default(),
 			resolve_ipv6: false,
-			tcp_nodelay: false,
+			tcp_nodelay: true,
 			file_raw_mode: false,
 			tls_keypair: None,
 
@@ -432,8 +432,8 @@ impl WispConfig {
 impl Default for StreamConfig {
 	fn default() -> Self {
 		Self {
-			tcp_nodelay: false,
-			buffer_size: 16384,
+			tcp_nodelay: true,
+			buffer_size: 128 * 1024,
 
 			allow_udp: true,
 			allow_wsproxy_udp: false,

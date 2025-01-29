@@ -8,10 +8,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::{
-	ws::{DynWebSocketRead, LockingWebSocketWrite},
-	Role, WispError,
-};
+use crate::{Role, WispError};
 
 use super::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder};
 
@@ -60,18 +57,6 @@ impl ProtocolExtension for PasswordProtocolExtension {
 		PASSWORD_PROTOCOL_EXTENSION_ID
 	}
 
-	fn box_clone(&self) -> Box<dyn ProtocolExtension + Sync + Send> {
-		Box::new(self.clone())
-	}
-
-	fn get_supported_packets(&self) -> &'static [u8] {
-		&[]
-	}
-
-	fn get_congestion_stream_types(&self) -> &'static [u8] {
-		&[]
-	}
-
 	fn encode(&self) -> Bytes {
 		match self {
 			Self::ServerBeforeClientInfo { required } => {
@@ -92,22 +77,8 @@ impl ProtocolExtension for PasswordProtocolExtension {
 		}
 	}
 
-	async fn handle_handshake(
-		&mut self,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError> {
-		Ok(())
-	}
-
-	async fn handle_packet(
-		&mut self,
-		_: u8,
-		_: Bytes,
-		_: &mut DynWebSocketRead,
-		_: &dyn LockingWebSocketWrite,
-	) -> Result<(), WispError> {
-		Err(WispError::ExtensionImplNotSupported)
+	fn box_clone(&self) -> Box<dyn ProtocolExtension + Sync + Send> {
+		Box::new(self.clone())
 	}
 }
 

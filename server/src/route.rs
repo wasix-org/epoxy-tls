@@ -2,7 +2,7 @@ use std::{fmt::Display, future::Future, io::Cursor};
 
 use anyhow::Context;
 use bytes::Bytes;
-use fastwebsockets::{FragmentCollector, Role, WebSocket, WebSocketRead, WebSocketWrite};
+use futures_util::future::Either;
 use http_body_util::Full;
 use hyper::{
 	body::Incoming, header::SEC_WEBSOCKET_PROTOCOL, server::conn::http1::Builder,
@@ -11,9 +11,9 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use log::{debug, error, trace};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use wisp_mux::{
-	generic::{GenericWebSocketRead, GenericWebSocketWrite},
-	ws::{EitherWebSocketRead, EitherWebSocketWrite},
+use tokio_websockets::Limits;
+use wisp_mux::ws::{
+	TokioWebsocketsTransport, WebSocketExt, WebSocketSplitRead, WebSocketSplitWrite,
 };
 
 use crate::{
@@ -23,17 +23,18 @@ use crate::{
 	stream::WebSocketStreamWrapper,
 	upgrade::{is_upgrade_request, upgrade},
 	util_chain::{chain, Chain},
+	util_map_err::MapErr,
 	CONFIG,
 };
 
-pub type WispStreamRead = EitherWebSocketRead<
-	WebSocketRead<Chain<Cursor<Bytes>, ServerStreamRead>>,
-	GenericWebSocketRead<FramedRead<ServerStreamRead, LengthDelimitedCodec>, std::io::Error>,
+pub type WispStreamRead = Either<
+	WebSocketSplitRead<TokioWebsocketsTransport<Chain<Cursor<Bytes>, ServerStream>>>,
+	MapErr<FramedRead<ServerStreamRead, LengthDelimitedCodec>>,
 >;
-pub type WispStreamWrite = EitherWebSocketWrite<
-	WebSocketWrite<ServerStreamWrite>,
-	GenericWebSocketWrite<FramedWrite<ServerStreamWrite, LengthDelimitedCodec>, std::io::Error>,
->;
+pub type WispWsStreamWrite =
+	WebSocketSplitWrite<TokioWebsocketsTransport<Chain<Cursor<Bytes>, ServerStream>>>;
+pub type WispStreamWrite =
+	Either<WispWsStreamWrite, MapErr<FramedWrite<ServerStreamWrite, LengthDelimitedCodec>>>;
 pub type WispResult = (WispStreamRead, WispStreamWrite);
 
 pub enum ServerRouteResult {
@@ -216,38 +217,30 @@ pub async fn route(
 							|fut, res, maybe_ip| async move {
 								let ws = fut.await.context("failed to await upgrade future")?;
 
-								let mut ws =
-									WebSocket::after_handshake(TokioIo::new(ws), Role::Server);
-								ws.set_max_message_size(CONFIG.server.max_message_size);
-								ws.set_auto_pong(false);
-
 								match res {
 									HttpUpgradeResult::Wisp {
 										has_ws_protocol,
 										is_wispnet,
 									} => {
-										let (read, write) = ws.split(|x| {
-											let parts = x
-												.into_inner()
-												.downcast::<TokioIo<ServerStream>>()
-												.unwrap();
-											let (r, w) = parts.io.into_inner().split();
-											(chain(Cursor::new(parts.read_buf), r), w)
-										});
+										let ws = ws.downcast::<TokioIo<ServerStream>>().unwrap();
+										let ws =
+											chain(Cursor::new(ws.read_buf), ws.io.into_inner());
+
+										let ws = tokio_websockets::ServerBuilder::new()
+											.limits(Limits::default().max_payload_len(Some(
+												CONFIG.server.max_message_size,
+											)))
+											.serve(ws);
+										let (read, write) =
+											TokioWebsocketsTransport(ws).split_fast();
 
 										let result = if is_wispnet {
 											ServerRouteResult::Wispnet {
-												stream: (
-													EitherWebSocketRead::Left(read),
-													EitherWebSocketWrite::Left(write),
-												),
+												stream: (Either::Left(read), Either::Left(write)),
 											}
 										} else {
 											ServerRouteResult::Wisp {
-												stream: (
-													EitherWebSocketRead::Left(read),
-													EitherWebSocketWrite::Left(write),
-												),
+												stream: (Either::Left(read), Either::Left(write)),
 												has_ws_protocol,
 											}
 										};
@@ -255,7 +248,12 @@ pub async fn route(
 										(callback)(result, maybe_ip);
 									}
 									HttpUpgradeResult::WsProxy { path, udp } => {
-										let ws = WebSocketStreamWrapper(FragmentCollector::new(ws));
+										let ws = tokio_websockets::ServerBuilder::new()
+											.limits(Limits::default().max_payload_len(Some(
+												CONFIG.server.max_message_size,
+											)))
+											.serve(TokioIo::new(ws));
+										let ws = WebSocketStreamWrapper(ws);
 										(callback)(
 											ServerRouteResult::WsProxy {
 												stream: ws,
@@ -282,15 +280,12 @@ pub async fn route(
 				.new_codec();
 
 			let (read, write) = stream.split();
-			let read = GenericWebSocketRead::new(FramedRead::new(read, codec.clone()));
-			let write = GenericWebSocketWrite::new(FramedWrite::new(write, codec));
+			let read = MapErr(FramedRead::new(read, codec.clone()));
+			let write = MapErr(FramedWrite::new(write, codec));
 
 			(callback)(
 				ServerRouteResult::Wisp {
-					stream: (
-						EitherWebSocketRead::Right(read),
-						EitherWebSocketWrite::Right(write),
-					),
+					stream: (Either::Right(read), Either::Right(write)),
 					has_ws_protocol: true,
 				},
 				None,

@@ -1,159 +1,157 @@
-use std::{
-	future::Future,
-	sync::{
-		atomic::{AtomicBool, Ordering},
-		Arc,
-	},
-};
-
-use flume as mpsc;
 use futures::channel::oneshot;
 
 use crate::{
-	extensions::{udp::UdpProtocolExtension, AnyProtocolExtension},
+	extensions::udp::UdpProtocolExtension,
 	mux::send_info_packet,
-	ws::{DynWebSocketRead, LockedWebSocketWrite, Payload, WebSocketRead, WebSocketWrite},
-	CloseReason, MuxProtocolExtensionStream, MuxStream, Packet, PacketType, Role, StreamType,
-	WispError,
+	packet::{ConnectPacket, ContinuePacket, MaybeInfoPacket, Packet, StreamType},
+	stream::MuxStream,
+	ws::{WebSocketRead, WebSocketReadExt, WebSocketWrite},
+	LockedWebSocketWrite, Role, WispError,
 };
 
 use super::{
-	get_supported_extensions,
-	inner::{MuxInner, WsEvent},
-	validate_continue_packet, Multiplexor, MuxResult, WispHandshakeResult, WispHandshakeResultKind,
-	WispV2Handshake,
+	get_supported_extensions, handle_handshake,
+	inner::{FlowControl, MultiplexorActor, StreamMap, WsEvent},
+	validate_continue_packet, Multiplexor, MultiplexorImpl, MuxResult, WispHandshakeResult,
+	WispHandshakeResultKind, WispV2Handshake,
 };
 
-async fn handshake<R: WebSocketRead + 'static, W: WebSocketWrite>(
-	rx: &mut R,
-	tx: &LockedWebSocketWrite<W>,
-	v2_info: Option<WispV2Handshake>,
-) -> Result<(WispHandshakeResult, u32), WispError> {
-	if let Some(WispV2Handshake {
-		mut builders,
-		closure,
-	}) = v2_info
-	{
-		let packet =
-			Packet::maybe_parse_info(rx.wisp_read_frame(tx).await?, Role::Client, &mut builders)?;
+pub(crate) struct ClientActor;
 
-		if let PacketType::Info(info) = packet.packet_type {
-			// v2 server
-			let buffer_size = validate_continue_packet(&rx.wisp_read_frame(tx).await?.try_into()?)?;
+impl<W: WebSocketWrite> MultiplexorActor<W> for ClientActor {
+	fn handle_connect_packet(
+		&mut self,
+		_: crate::stream::MuxStream<W>,
+		_: crate::packet::ConnectPacket,
+	) -> Result<(), WispError> {
+		Err(WispError::InvalidPacketType(0x01))
+	}
 
-			(closure)(&mut builders).await?;
-			send_info_packet(tx, &mut builders).await?;
-
-			let mut supported_extensions = get_supported_extensions(info.extensions, &mut builders);
-
-			for extension in &mut supported_extensions {
-				extension
-					.handle_handshake(DynWebSocketRead::from_mut(rx), tx)
-					.await?;
+	fn handle_continue_packet(
+		&mut self,
+		id: u32,
+		pkt: ContinuePacket,
+		streams: &mut StreamMap,
+	) -> Result<(), WispError> {
+		if let Some(stream) = streams.get(&id) {
+			if stream.info.flow_status == FlowControl::EnabledTrackAmount {
+				stream.info.flow_set(pkt.buffer_remaining);
+				stream.info.flow_wake();
 			}
-
-			Ok((
-				WispHandshakeResult {
-					kind: WispHandshakeResultKind::V2 {
-						extensions: supported_extensions,
-					},
-					downgraded: false,
-				},
-				buffer_size,
-			))
-		} else {
-			// downgrade to v1
-			let buffer_size = validate_continue_packet(&packet)?;
-
-			Ok((
-				WispHandshakeResult {
-					kind: WispHandshakeResultKind::V1 { frame: None },
-					downgraded: true,
-				},
-				buffer_size,
-			))
 		}
-	} else {
-		// user asked for a v1 client
-		let buffer_size = validate_continue_packet(&rx.wisp_read_frame(tx).await?.try_into()?)?;
 
-		Ok((
-			WispHandshakeResult {
-				kind: WispHandshakeResultKind::V1 { frame: None },
-				downgraded: false,
-			},
-			buffer_size,
-		))
+		Ok(())
+	}
+
+	fn get_flow_control(ty: StreamType, flow_stream_types: &[u8]) -> FlowControl {
+		if flow_stream_types.contains(&ty.into()) {
+			FlowControl::EnabledTrackAmount
+		} else {
+			FlowControl::Disabled
+		}
 	}
 }
 
-/// Client side multiplexor.
-pub struct ClientMux<W: WebSocketWrite + 'static> {
-	/// Whether the connection was downgraded to Wisp v1.
-	///
-	/// If this variable is true you must assume no extensions are supported.
-	pub downgraded: bool,
-	/// Extensions that are supported by both sides.
-	pub supported_extensions: Vec<AnyProtocolExtension>,
-	actor_tx: mpsc::Sender<WsEvent<W>>,
-	tx: LockedWebSocketWrite<W>,
-	actor_exited: Arc<AtomicBool>,
+pub struct ClientImpl;
+
+impl<W: WebSocketWrite> MultiplexorImpl<W> for ClientImpl {
+	type Actor = ClientActor;
+
+	async fn handshake<R: WebSocketRead>(
+		&mut self,
+		rx: &mut R,
+		tx: &mut LockedWebSocketWrite<W>,
+		v2: Option<WispV2Handshake>,
+	) -> Result<WispHandshakeResult, WispError> {
+		if let Some(WispV2Handshake {
+			mut builders,
+			closure,
+		}) = v2
+		{
+			let packet =
+				MaybeInfoPacket::decode(rx.next_erroring().await?, &mut builders, Role::Client)?;
+
+			match packet {
+				MaybeInfoPacket::Info(info) => {
+					// v2 server
+					let buffer_size =
+						validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
+
+					(closure)(&mut builders).await?;
+					send_info_packet(tx, &mut builders, Role::Client).await?;
+
+					let mut supported_extensions =
+						get_supported_extensions(info.extensions, &mut builders);
+
+					handle_handshake(rx, tx, &mut supported_extensions).await?;
+
+					Ok(WispHandshakeResult {
+						kind: WispHandshakeResultKind::V2 {
+							extensions: supported_extensions,
+						},
+						downgraded: false,
+						buffer_size,
+					})
+				}
+				MaybeInfoPacket::Packet(packet) => {
+					// downgrade to v1
+					let buffer_size = validate_continue_packet(&packet)?;
+
+					Ok(WispHandshakeResult {
+						kind: WispHandshakeResultKind::V1 { packet: None },
+						downgraded: true,
+						buffer_size,
+					})
+				}
+			}
+		} else {
+			// user asked for a v1 client
+			let buffer_size =
+				validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
+
+			Ok(WispHandshakeResult {
+				kind: WispHandshakeResultKind::V1 { packet: None },
+				downgraded: false,
+				buffer_size,
+			})
+		}
+	}
+
+	async fn handle_error(
+		&mut self,
+		err: WispError,
+		_: &mut LockedWebSocketWrite<W>,
+	) -> Result<WispError, WispError> {
+		Ok(err)
+	}
 }
 
-impl<W: WebSocketWrite + 'static> ClientMux<W> {
+impl<W: WebSocketWrite> Multiplexor<ClientImpl, W> {
 	/// Create a new client side multiplexor.
 	///
-	/// If `wisp_v2` is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
+	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
 	/// if the extensions you need are available after the multiplexor has been created.
-	pub async fn create<R>(
-		mut rx: R,
+	#[expect(clippy::new_ret_no_self)]
+	pub async fn new<R: WebSocketRead>(
+		rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,
-	) -> Result<
-		MuxResult<ClientMux<W>, impl Future<Output = Result<(), WispError>> + Send>,
-		WispError,
-	>
-	where
-		R: WebSocketRead + 'static,
-	{
-		let tx = LockedWebSocketWrite::new(tx);
-
-		let (handshake_result, buffer_size) = handshake(&mut rx, &tx, wisp_v2).await?;
-		let (extensions, extra_packet) = handshake_result.kind.into_parts();
-
-		let mux_inner = MuxInner::new_client(
-			rx,
-			extra_packet,
-			tx.clone(),
-			extensions.clone(),
-			buffer_size,
-		);
-
-		Ok(MuxResult(
-			Self {
-				actor_tx: mux_inner.actor_tx,
-				actor_exited: mux_inner.actor_exited,
-
-				tx,
-
-				downgraded: handshake_result.downgraded,
-				supported_extensions: extensions,
-			},
-			mux_inner.mux.into_future(),
-		))
+	) -> Result<MuxResult<ClientImpl, W>, WispError> {
+		Self::create(rx, tx, wisp_v2, ClientImpl, ClientActor).await
 	}
 
 	/// Create a new stream, multiplexed through Wisp.
-	pub async fn client_new_stream(
+	pub async fn new_stream(
 		&self,
 		stream_type: StreamType,
 		host: String,
 		port: u16,
 	) -> Result<MuxStream<W>, WispError> {
-		if self.actor_exited.load(Ordering::Acquire) {
+		if self.actor_tx.is_disconnected() {
 			return Err(WispError::MuxTaskEnded);
 		}
+
 		if stream_type == StreamType::Udp
 			&& !self
 				.supported_extensions
@@ -164,74 +162,19 @@ impl<W: WebSocketWrite + 'static> ClientMux<W> {
 				UdpProtocolExtension::ID,
 			]));
 		}
+
 		let (tx, rx) = oneshot::channel();
 		self.actor_tx
-			.send_async(WsEvent::CreateStream(stream_type, host, port, tx))
+			.send_async(WsEvent::CreateStream(
+				ConnectPacket {
+					stream_type,
+					host,
+					port,
+				},
+				tx,
+			))
 			.await
 			.map_err(|_| WispError::MuxMessageFailedToSend)?;
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
-	}
-
-	/// Send a ping to the server.
-	pub async fn send_ping(&self, payload: Payload<'static>) -> Result<(), WispError> {
-		if self.actor_exited.load(Ordering::Acquire) {
-			return Err(WispError::MuxTaskEnded);
-		}
-		let (tx, rx) = oneshot::channel();
-		self.actor_tx
-			.send_async(WsEvent::SendPing(payload, tx))
-			.await
-			.map_err(|_| WispError::MuxMessageFailedToSend)?;
-		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
-	}
-
-	async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
-		if self.actor_exited.load(Ordering::Acquire) {
-			return Err(WispError::MuxTaskEnded);
-		}
-		self.actor_tx
-			.send_async(WsEvent::EndFut(reason))
-			.await
-			.map_err(|_| WispError::MuxMessageFailedToSend)
-	}
-
-	/// Close all streams.
-	///
-	/// Also terminates the multiplexor future.
-	pub async fn close(&self) -> Result<(), WispError> {
-		self.close_internal(None).await
-	}
-
-	/// Close all streams and send a close reason on stream ID 0.
-	///
-	/// Also terminates the multiplexor future.
-	pub async fn close_with_reason(&self, reason: CloseReason) -> Result<(), WispError> {
-		self.close_internal(Some(reason)).await
-	}
-
-	/// Get a protocol extension stream for sending packets with stream id 0.
-	pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream<W> {
-		MuxProtocolExtensionStream {
-			stream_id: 0,
-			tx: self.tx.clone(),
-			is_closed: self.actor_exited.clone(),
-		}
-	}
-}
-
-impl<W: WebSocketWrite + 'static> Drop for ClientMux<W> {
-	fn drop(&mut self) {
-		let _ = self.actor_tx.send(WsEvent::EndFut(None));
-	}
-}
-
-impl<W: WebSocketWrite + 'static> Multiplexor for ClientMux<W> {
-	fn has_extension(&self, extension_id: u8) -> bool {
-		self.supported_extensions
-			.iter()
-			.any(|x| x.get_id() == extension_id)
-	}
-	async fn exit(&self, reason: CloseReason) -> Result<(), WispError> {
-		self.close_with_reason(reason).await
 	}
 }

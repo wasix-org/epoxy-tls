@@ -1,338 +1,240 @@
 use std::{
+	io,
 	pin::Pin,
-	sync::{
-		atomic::{AtomicBool, Ordering},
-		Arc,
-	},
-	task::{Context, Poll},
+	sync::Arc,
+	task::{ready, Context, Poll},
 };
 
-use bytes::BytesMut;
 use futures::{
-	ready, stream::IntoAsyncRead, task::noop_waker_ref, AsyncBufRead, AsyncRead, AsyncWrite, Sink,
-	Stream, TryStreamExt,
+	channel::oneshot, stream::IntoAsyncRead, AsyncBufRead, AsyncRead, AsyncWrite, FutureExt,
+	SinkExt, Stream, StreamExt, TryStreamExt,
 };
-use pin_project_lite::pin_project;
+use pin_project::pin_project;
 
-use crate::{ws::Payload, AtomicCloseReason, CloseReason, WispError};
+use crate::{
+	locked_sink::LockedWebSocketWrite,
+	packet::{ClosePacket, CloseReason, Packet},
+	ws::{Payload, WebSocketWrite},
+	WispError,
+};
 
-pin_project! {
-	/// Multiplexor stream that implements futures `Stream + Sink`.
-	pub struct MuxStreamIo {
-		#[pin]
-		pub(crate) rx: MuxStreamIoStream,
-		#[pin]
-		pub(crate) tx: MuxStreamIoSink,
+use super::{MuxStream, MuxStreamRead, MuxStreamWrite, StreamInfo, WsEvent};
+
+struct MapToIo<W: WebSocketWrite>(MuxStreamRead<W>);
+
+impl<W: WebSocketWrite> Stream for MapToIo<W> {
+	type Item = Result<Payload, std::io::Error>;
+
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		self.0.poll_next_unpin(cx).map_err(std::io::Error::other)
 	}
 }
 
-impl MuxStreamIo {
-	/// Turn the stream into one that implements futures `AsyncRead + AsyncBufRead + AsyncWrite`.
-	pub fn into_asyncrw(self) -> MuxStreamAsyncRW {
-		MuxStreamAsyncRW {
-			rx: self.rx.into_asyncread(),
-			tx: self.tx.into_asyncwrite(),
-		}
-	}
-
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		self.rx.get_close_reason()
-	}
-
-	/// Split the stream into read and write parts, consuming it.
-	pub fn into_split(self) -> (MuxStreamIoStream, MuxStreamIoSink) {
-		(self.rx, self.tx)
-	}
+// TODO: don't use `futures` for this so get_close_reason etc can be implemented
+#[pin_project]
+pub struct MuxStreamAsyncRead<W: WebSocketWrite> {
+	#[pin]
+	inner: IntoAsyncRead<MapToIo<W>>,
 }
 
-impl Stream for MuxStreamIo {
-	type Item = Result<Payload<'static>, std::io::Error>;
-	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		self.project().rx.poll_next(cx)
-	}
-}
-
-impl Sink<BytesMut> for MuxStreamIo {
-	type Error = std::io::Error;
-	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.project().tx.poll_ready(cx)
-	}
-	fn start_send(self: Pin<&mut Self>, item: BytesMut) -> Result<(), Self::Error> {
-		self.project().tx.start_send(item)
-	}
-	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.project().tx.poll_flush(cx)
-	}
-	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.project().tx.poll_close(cx)
-	}
-}
-
-pin_project! {
-	/// Read side of a multiplexor stream that implements futures `Stream`.
-	pub struct MuxStreamIoStream {
-		#[pin]
-		pub(crate) rx: Pin<Box<dyn Stream<Item = Result<Payload<'static>, WispError>> + Send>>,
-		pub(crate) is_closed: Arc<AtomicBool>,
-		pub(crate) close_reason: Arc<AtomicCloseReason>,
-	}
-}
-
-impl MuxStreamIoStream {
-	/// Turn the stream into one that implements futures `AsyncRead + AsyncBufRead`.
-	pub fn into_asyncread(self) -> MuxStreamAsyncRead {
-		MuxStreamAsyncRead::new(self)
-	}
-
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		if self.is_closed.load(Ordering::Acquire) {
-			Some(self.close_reason.load(Ordering::Acquire))
-		} else {
-			None
+impl<W: WebSocketWrite> MuxStreamAsyncRead<W> {
+	pub(crate) fn new(inner: MuxStreamRead<W>) -> Self {
+		Self {
+			inner: MapToIo(inner).into_async_read(),
 		}
 	}
 }
 
-impl Stream for MuxStreamIoStream {
-	type Item = Result<Payload<'static>, std::io::Error>;
-	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		self.project()
-			.rx
-			.poll_next(cx)
-			.map_err(std::io::Error::other)
-	}
-}
-
-pin_project! {
-	/// Write side of a multiplexor stream that implements futures `Sink`.
-	pub struct MuxStreamIoSink {
-		#[pin]
-		pub(crate) tx: Pin<Box<dyn Sink<Payload<'static>, Error = WispError> + Send>>,
-		pub(crate) is_closed: Arc<AtomicBool>,
-		pub(crate) close_reason: Arc<AtomicCloseReason>,
-	}
-}
-
-impl MuxStreamIoSink {
-	/// Turn the sink into one that implements futures `AsyncWrite`.
-	pub fn into_asyncwrite(self) -> MuxStreamAsyncWrite {
-		MuxStreamAsyncWrite::new(self)
-	}
-
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		if self.is_closed.load(Ordering::Acquire) {
-			Some(self.close_reason.load(Ordering::Acquire))
-		} else {
-			None
-		}
-	}
-}
-
-impl Sink<BytesMut> for MuxStreamIoSink {
-	type Error = std::io::Error;
-	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.project()
-			.tx
-			.poll_ready(cx)
-			.map_err(std::io::Error::other)
-	}
-	fn start_send(self: Pin<&mut Self>, item: BytesMut) -> Result<(), Self::Error> {
-		self.project()
-			.tx
-			.start_send(Payload::Bytes(item))
-			.map_err(std::io::Error::other)
-	}
-	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.project()
-			.tx
-			.poll_flush(cx)
-			.map_err(std::io::Error::other)
-	}
-	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		self.project()
-			.tx
-			.poll_close(cx)
-			.map_err(std::io::Error::other)
-	}
-}
-
-pin_project! {
-	/// Multiplexor stream that implements futures `AsyncRead + AsyncBufRead + AsyncWrite`.
-	pub struct MuxStreamAsyncRW {
-		#[pin]
-		rx: MuxStreamAsyncRead,
-		#[pin]
-		tx: MuxStreamAsyncWrite,
-	}
-}
-
-impl MuxStreamAsyncRW {
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		self.rx.get_close_reason()
-	}
-
-	/// Split the stream into read and write parts, consuming it.
-	pub fn into_split(self) -> (MuxStreamAsyncRead, MuxStreamAsyncWrite) {
-		(self.rx, self.tx)
-	}
-}
-
-impl AsyncRead for MuxStreamAsyncRW {
+impl<W: WebSocketWrite> AsyncRead for MuxStreamAsyncRead<W> {
 	fn poll_read(
 		self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
 		buf: &mut [u8],
-	) -> Poll<std::io::Result<usize>> {
-		self.project().rx.poll_read(cx, buf)
+	) -> Poll<io::Result<usize>> {
+		self.project().inner.poll_read(cx, buf)
 	}
 
 	fn poll_read_vectored(
 		self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
-		bufs: &mut [std::io::IoSliceMut<'_>],
-	) -> Poll<std::io::Result<usize>> {
-		self.project().rx.poll_read_vectored(cx, bufs)
+		bufs: &mut [io::IoSliceMut<'_>],
+	) -> Poll<io::Result<usize>> {
+		self.project().inner.poll_read_vectored(cx, bufs)
 	}
 }
 
-impl AsyncBufRead for MuxStreamAsyncRW {
-	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-		self.project().rx.poll_fill_buf(cx)
+impl<W: WebSocketWrite> AsyncBufRead for MuxStreamAsyncRead<W> {
+	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
+		self.project().inner.poll_fill_buf(cx)
 	}
 
 	fn consume(self: Pin<&mut Self>, amt: usize) {
-		self.project().rx.consume(amt);
+		self.project().inner.consume(amt);
 	}
 }
 
-impl AsyncWrite for MuxStreamAsyncRW {
-	fn poll_write(
-		self: Pin<&mut Self>,
-		cx: &mut Context<'_>,
-		buf: &[u8],
-	) -> Poll<std::io::Result<usize>> {
-		self.project().tx.poll_write(cx, buf)
-	}
+pub struct MuxStreamAsyncWrite<W: WebSocketWrite> {
+	inner: flume::r#async::SendSink<'static, WsEvent<W>>,
+	write: LockedWebSocketWrite<W>,
+	info: Arc<StreamInfo>,
 
-	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-		self.project().tx.poll_flush(cx)
-	}
-
-	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-		self.project().tx.poll_close(cx)
-	}
+	oneshot: Option<oneshot::Receiver<Result<(), WispError>>>,
 }
 
-pin_project! {
-	/// Read side of a multiplexor stream that implements futures `AsyncRead + AsyncBufRead`.
-	pub struct MuxStreamAsyncRead {
-		#[pin]
-		rx: IntoAsyncRead<MuxStreamIoStream>,
-		is_closed: Arc<AtomicBool>,
-		close_reason: Arc<AtomicCloseReason>,
-	}
-}
-
-impl MuxStreamAsyncRead {
-	pub(crate) fn new(stream: MuxStreamIoStream) -> Self {
+impl<W: WebSocketWrite> MuxStreamAsyncWrite<W> {
+	pub(crate) fn new(inner: MuxStreamWrite<W>) -> Self {
 		Self {
-			is_closed: stream.is_closed.clone(),
-			close_reason: stream.close_reason.clone(),
-			rx: stream.into_async_read(),
+			inner: inner.inner,
+			write: inner.write,
+			info: inner.info,
+
+			oneshot: None,
 		}
 	}
 
 	/// Get the stream's close reason, if it was closed.
 	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		if self.is_closed.load(Ordering::Acquire) {
-			Some(self.close_reason.load(Ordering::Acquire))
-		} else {
-			None
-		}
+		self.inner.is_disconnected().then(|| self.info.get_reason())
 	}
 }
 
-impl AsyncRead for MuxStreamAsyncRead {
-	fn poll_read(
-		self: Pin<&mut Self>,
-		cx: &mut Context<'_>,
-		buf: &mut [u8],
-	) -> Poll<std::io::Result<usize>> {
-		self.project().rx.poll_read(cx, buf)
-	}
-}
-impl AsyncBufRead for MuxStreamAsyncRead {
-	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-		self.project().rx.poll_fill_buf(cx)
-	}
-	fn consume(self: Pin<&mut Self>, amt: usize) {
-		self.project().rx.consume(amt);
-	}
-}
-
-pin_project! {
-	/// Write side of a multiplexor stream that implements futures `AsyncWrite`.
-	pub struct MuxStreamAsyncWrite {
-		#[pin]
-		tx: MuxStreamIoSink,
-		error: Option<std::io::Error>
-	}
-}
-
-impl MuxStreamAsyncWrite {
-	pub(crate) fn new(sink: MuxStreamIoSink) -> Self {
-		Self {
-			tx: sink,
-			error: None,
-		}
-	}
-
-	/// Get the stream's close reason, if it was closed.
-	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		self.tx.get_close_reason()
-	}
-}
-
-impl AsyncWrite for MuxStreamAsyncWrite {
+impl<W: WebSocketWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
 	fn poll_write(
 		mut self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
 		buf: &[u8],
-	) -> Poll<std::io::Result<usize>> {
-		if let Some(err) = self.error.take() {
-			return Poll::Ready(Err(err));
+	) -> Poll<io::Result<usize>> {
+		ready!(self.write.poll_lock(cx));
+		ready!(self.write.get().poll_flush(cx)).map_err(io::Error::other)?;
+		ready!(self.write.get().poll_ready(cx)).map_err(io::Error::other)?;
+
+		let packet = Packet::new_data(self.info.id, buf);
+		self.write
+			.get()
+			.start_send(packet.encode())
+			.map_err(io::Error::other)?;
+
+		self.write.unlock();
+		Poll::Ready(Ok(buf.len()))
+	}
+
+	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+		ready!(self.write.poll_lock(cx));
+		ready!(self.write.get().poll_flush(cx)).map_err(io::Error::other)?;
+		self.write.unlock();
+		Poll::Ready(Ok(()))
+	}
+
+	fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+		if let Some(oneshot) = &mut self.oneshot {
+			let ret = ready!(oneshot.poll_unpin(cx));
+			self.oneshot.take();
+			Poll::Ready(
+				ret.map_err(|_| io::Error::other(WispError::MuxMessageFailedToSend))?
+					.map_err(io::Error::other),
+			)
+		} else {
+			ready!(self.as_mut().poll_flush(cx))?;
+
+			ready!(self.inner.poll_ready_unpin(cx))
+				.map_err(|_| io::Error::other(WispError::MuxMessageFailedToSend))?;
+
+			let (tx, rx) = oneshot::channel();
+			self.oneshot = Some(rx);
+
+			let pkt = WsEvent::Close(
+				self.info.id,
+				ClosePacket {
+					reason: CloseReason::Unknown,
+				},
+				tx,
+			);
+
+			self.inner
+				.start_send_unpin(pkt)
+				.map_err(|_| io::Error::other(WispError::MuxMessageFailedToSend))?;
+
+			Poll::Pending
 		}
+	}
+}
 
-		let mut this = self.as_mut().project();
+#[pin_project]
+pub struct MuxStreamAsyncRW<W: WebSocketWrite> {
+	#[pin]
+	read: MuxStreamAsyncRead<W>,
+	#[pin]
+	write: MuxStreamAsyncWrite<W>,
+}
 
-		ready!(this.tx.as_mut().poll_ready(cx))?;
-		match this.tx.as_mut().start_send(buf.into()) {
-			Ok(()) => {
-				let mut cx = Context::from_waker(noop_waker_ref());
-				let cx = &mut cx;
-
-				match this.tx.poll_flush(cx) {
-					Poll::Ready(Err(err)) => {
-						self.error = Some(err);
-					}
-					Poll::Ready(Ok(())) | Poll::Pending => {}
-				}
-
-				Poll::Ready(Ok(buf.len()))
-			}
-			Err(e) => Poll::Ready(Err(e)),
+impl<W: WebSocketWrite> MuxStreamAsyncRW<W> {
+	pub(crate) fn new(old: MuxStream<W>) -> Self {
+		Self {
+			read: MuxStreamAsyncRead::new(old.read),
+			write: MuxStreamAsyncWrite::new(old.write),
 		}
 	}
 
-	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-		self.project().tx.poll_flush(cx)
+	pub fn into_split(self) -> (MuxStreamAsyncRead<W>, MuxStreamAsyncWrite<W>) {
+		(self.read, self.write)
 	}
 
-	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-		self.project().tx.poll_close(cx)
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.write.get_close_reason()
+	}
+}
+
+impl<W: WebSocketWrite> AsyncRead for MuxStreamAsyncRW<W> {
+	fn poll_read(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &mut [u8],
+	) -> Poll<io::Result<usize>> {
+		self.project().read.poll_read(cx, buf)
+	}
+
+	fn poll_read_vectored(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		bufs: &mut [io::IoSliceMut<'_>],
+	) -> Poll<io::Result<usize>> {
+		self.project().read.poll_read_vectored(cx, bufs)
+	}
+}
+
+impl<W: WebSocketWrite> AsyncBufRead for MuxStreamAsyncRW<W> {
+	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
+		self.project().read.poll_fill_buf(cx)
+	}
+
+	fn consume(self: Pin<&mut Self>, amt: usize) {
+		self.project().read.consume(amt);
+	}
+}
+
+impl<W: WebSocketWrite> AsyncWrite for MuxStreamAsyncRW<W> {
+	fn poll_write(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &[u8],
+	) -> Poll<io::Result<usize>> {
+		self.project().write.poll_write(cx, buf)
+	}
+
+	fn poll_write_vectored(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		bufs: &[io::IoSlice<'_>],
+	) -> Poll<io::Result<usize>> {
+		self.project().write.poll_write_vectored(cx, bufs)
+	}
+
+	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+		self.project().write.poll_flush(cx)
+	}
+
+	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+		self.project().write.poll_close(cx)
 	}
 }

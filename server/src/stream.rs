@@ -7,13 +7,17 @@ use anyhow::Context;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::BytesMut;
 use cfg_if::cfg_if;
-use fastwebsockets::{FragmentCollector, Frame, OpCode, Payload, WebSocketError};
+use futures_util::{SinkExt, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::debug;
 use regex::RegexSet;
 use tokio::net::{TcpStream, UdpSocket};
-use wisp_mux::{ConnectPacket, MuxStream, StreamType};
+use tokio_websockets::{CloseCode, Message, Payload, WebSocketStream};
+use wisp_mux::{
+	packet::{ConnectPacket, StreamType},
+	stream::MuxStream,
+};
 
 use crate::{route::WispStreamWrite, CONFIG, RESOLVER};
 
@@ -25,7 +29,7 @@ fn allowed_set(stream_type: StreamType) -> &'static RegexSet {
 	match stream_type {
 		StreamType::Tcp => CONFIG.stream.allowed_tcp_hosts(),
 		StreamType::Udp => CONFIG.stream.allowed_udp_hosts(),
-		StreamType::Unknown(_) => unreachable!(),
+		StreamType::Other(_) => unreachable!(),
 	}
 }
 
@@ -33,7 +37,7 @@ fn blocked_set(stream_type: StreamType) -> &'static RegexSet {
 	match stream_type {
 		StreamType::Tcp => CONFIG.stream.blocked_tcp_hosts(),
 		StreamType::Udp => CONFIG.stream.blocked_udp_hosts(),
-		StreamType::Unknown(_) => unreachable!(),
+		StreamType::Other(_) => unreachable!(),
 	}
 }
 
@@ -118,8 +122,8 @@ pub enum ResolvedPacket {
 
 impl ClientStream {
 	pub async fn resolve(packet: ConnectPacket) -> anyhow::Result<ResolvedPacket> {
-		if CONFIG.wisp.has_wispnet() && packet.destination_hostname.ends_with(".wisp") {
-			if let Some(wispnet_server) = packet.destination_hostname.split(".wisp").next() {
+		if CONFIG.wisp.has_wispnet() && packet.host.ends_with(".wisp") {
+			if let Some(wispnet_server) = packet.host.split(".wisp").next() {
 				debug!("routing {:?} through wispnet", packet);
 				let decoded = BASE64_STANDARD
 					.decode(wispnet_server)
@@ -134,14 +138,14 @@ impl ClientStream {
 
 		cfg_if! {
 			if #[cfg(feature = "twisp")] {
-				if let StreamType::Unknown(ty) = packet.stream_type {
+				if let StreamType::Other(ty) = packet.stream_type {
 					if ty == crate::handle::wisp::twisp::STREAM_TYPE && CONFIG.stream.allow_twisp && CONFIG.wisp.wisp_v2 {
 						return Ok(ResolvedPacket::Valid(packet));
 					}
 					return Ok(ResolvedPacket::Invalid);
 				}
 			} else {
-				if matches!(packet.stream_type, StreamType::Unknown(_)) {
+				if matches!(packet.stream_type, StreamType::Other(_)) {
 					return Ok(ResolvedPacket::Invalid);
 				}
 			}
@@ -155,17 +159,17 @@ impl ClientStream {
 			.stream
 			.blocked_ports()
 			.iter()
-			.any(|x| x.contains(&packet.destination_port))
+			.any(|x| x.contains(&packet.port))
 			&& !CONFIG
 				.stream
 				.allowed_ports()
 				.iter()
-				.any(|x| x.contains(&packet.destination_port))
+				.any(|x| x.contains(&packet.port))
 		{
 			return Ok(ResolvedPacket::Blocked);
 		}
 
-		if let Ok(addr) = IpAddr::from_str(&packet.destination_hostname) {
+		if let Ok(addr) = IpAddr::from_str(&packet.host) {
 			if !CONFIG.stream.allow_direct_ip {
 				return Ok(ResolvedPacket::Blocked);
 			}
@@ -186,7 +190,7 @@ impl ClientStream {
 		}
 
 		if match_addr(
-			&packet.destination_hostname,
+			&packet.host,
 			allowed_set(packet.stream_type),
 			blocked_set(packet.stream_type),
 		) {
@@ -195,23 +199,23 @@ impl ClientStream {
 
 		// allow stream type whitelists through
 		if match_addr(
-			&packet.destination_hostname,
+			&packet.host,
 			CONFIG.stream.allowed_hosts(),
 			CONFIG.stream.blocked_hosts(),
-		) && !allowed_set(packet.stream_type).is_match(&packet.destination_hostname)
+		) && !allowed_set(packet.stream_type).is_match(&packet.host)
 		{
 			return Ok(ResolvedPacket::Blocked);
 		}
 
 		let packet = RESOLVER
-			.resolve(packet.destination_hostname)
+			.resolve(packet.host)
 			.await
 			.context("failed to resolve hostname")?
 			.filter(|x| CONFIG.server.resolve_ipv6 || x.is_ipv4())
 			.map(|x| ConnectPacket {
 				stream_type: packet.stream_type,
-				destination_hostname: x.to_string(),
-				destination_port: packet.destination_port,
+				host: x.to_string(),
+				port: packet.port,
 			})
 			.next();
 
@@ -221,13 +225,11 @@ impl ClientStream {
 	pub async fn connect(packet: ConnectPacket) -> anyhow::Result<Self> {
 		match packet.stream_type {
 			StreamType::Tcp => {
-				let ipaddr = IpAddr::from_str(&packet.destination_hostname)
-					.context("failed to parse hostname as ipaddr")?;
-				let stream = TcpStream::connect(SocketAddr::new(ipaddr, packet.destination_port))
+				let ipaddr =
+					IpAddr::from_str(&packet.host).context("failed to parse hostname as ipaddr")?;
+				let stream = TcpStream::connect(SocketAddr::new(ipaddr, packet.port))
 					.await
-					.with_context(|| {
-						format!("failed to connect to host {}", packet.destination_hostname)
-					})?;
+					.with_context(|| format!("failed to connect to host {}", packet.host))?;
 
 				if CONFIG.stream.tcp_nodelay {
 					stream
@@ -242,8 +244,8 @@ impl ClientStream {
 					return Ok(ClientStream::Blocked);
 				}
 
-				let ipaddr = IpAddr::from_str(&packet.destination_hostname)
-					.context("failed to parse hostname as ipaddr")?;
+				let ipaddr =
+					IpAddr::from_str(&packet.host).context("failed to parse hostname as ipaddr")?;
 
 				let bind_addr = if ipaddr.is_ipv4() {
 					SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0)
@@ -253,23 +255,20 @@ impl ClientStream {
 
 				let stream = UdpSocket::bind(bind_addr).await?;
 
-				stream
-					.connect(SocketAddr::new(ipaddr, packet.destination_port))
-					.await?;
+				stream.connect(SocketAddr::new(ipaddr, packet.port)).await?;
 
 				Ok(ClientStream::Udp(stream))
 			}
 			#[cfg(feature = "twisp")]
-			StreamType::Unknown(crate::handle::wisp::twisp::STREAM_TYPE) => {
+			StreamType::Other(crate::handle::wisp::twisp::STREAM_TYPE) => {
 				if !CONFIG.stream.allow_twisp {
 					return Ok(ClientStream::Blocked);
 				}
 
-				let cmdline: Vec<std::ffi::OsString> =
-					shell_words::split(&packet.destination_hostname)?
-						.into_iter()
-						.map(Into::into)
-						.collect();
+				let cmdline: Vec<std::ffi::OsString> = shell_words::split(&packet.host)?
+					.into_iter()
+					.map(Into::into)
+					.collect();
 				let pty = pty_process::Pty::new()?;
 
 				let cmd = pty_process::Command::new(&cmdline[0])
@@ -278,7 +277,7 @@ impl ClientStream {
 
 				Ok(ClientStream::Pty(cmd, pty))
 			}
-			StreamType::Unknown(_) => Ok(ClientStream::Invalid),
+			StreamType::Other(_) => Ok(ClientStream::Invalid),
 		}
 	}
 }
@@ -289,25 +288,31 @@ pub enum WebSocketFrame {
 	Ignore,
 }
 
-pub struct WebSocketStreamWrapper(pub FragmentCollector<TokioIo<Upgraded>>);
+pub struct WebSocketStreamWrapper(pub WebSocketStream<TokioIo<Upgraded>>);
 
 impl WebSocketStreamWrapper {
-	pub async fn read(&mut self) -> Result<WebSocketFrame, WebSocketError> {
-		let frame = self.0.read_frame().await?;
-		Ok(match frame.opcode {
-			OpCode::Text | OpCode::Binary => WebSocketFrame::Data(frame.payload.into()),
-			OpCode::Close => WebSocketFrame::Close,
-			_ => WebSocketFrame::Ignore,
-		})
+	pub async fn read(&mut self) -> Option<Result<WebSocketFrame, tokio_websockets::Error>> {
+		let frame = self.0.next().await?;
+		match frame {
+			Ok(frame) if frame.is_binary() || frame.is_text() => {
+				Some(Ok(WebSocketFrame::Data(frame.into_payload().into())))
+			}
+			Ok(frame) if frame.is_close() => Some(Ok(WebSocketFrame::Close)),
+			Ok(_) => Some(Ok(WebSocketFrame::Ignore)),
+			Err(err) => Some(Err(err)),
+		}
 	}
 
-	pub async fn write(&mut self, data: &[u8]) -> Result<(), WebSocketError> {
-		self.0
-			.write_frame(Frame::binary(Payload::Borrowed(data)))
-			.await
+	pub async fn write(&mut self, data: impl Into<Payload>) -> Result<(), tokio_websockets::Error> {
+		self.0.send(Message::binary(data)).await
 	}
 
-	pub async fn close(&mut self, code: u16, reason: &[u8]) -> Result<(), WebSocketError> {
-		self.0.write_frame(Frame::close(code, reason)).await
+	pub async fn close(
+		&mut self,
+		code: CloseCode,
+		reason: &str,
+	) -> Result<(), tokio_websockets::Error> {
+		self.0.send(Message::close(Some(code), reason)).await?;
+		self.0.close().await
 	}
 }

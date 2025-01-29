@@ -6,81 +6,61 @@ pub mod wispnet;
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
-use bytes::BytesMut;
 use cfg_if::cfg_if;
 use event_listener::Event;
-use futures_util::FutureExt;
+use futures_util::{future::Either, FutureExt, SinkExt, StreamExt};
 use log::{debug, trace};
 use tokio::{
-	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
+	io::{AsyncWriteExt, BufReader},
+	net::TcpStream,
 	select,
 	task::JoinSet,
 	time::interval,
 };
-use tokio_util::compat::FuturesAsyncReadCompatExt;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
 use uuid::Uuid;
 use wisp_mux::{
-	ws::Payload, CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite,
+	packet::{CloseReason, ConnectPacket},
+	stream::MuxStream,
 	ServerMux,
 };
 use wispnet::route_wispnet;
 
 use crate::{
-	route::{WispResult, WispStreamWrite},
+	route::{WispResult, WispStreamWrite, WispWsStreamWrite},
 	stream::{ClientStream, ResolvedPacket},
 	CLIENTS, CONFIG,
 };
 
-async fn copy_read_fast(
-	muxrx: MuxStreamAsyncRead,
-	mut tcptx: OwnedWriteHalf,
-	#[cfg(feature = "speed-limit")] limiter: async_speed_limit::Limiter<
+async fn copy_fast(
+	mux: MuxStream<WispStreamWrite>,
+	tcp: TcpStream,
+	#[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
+		async_speed_limit::clock::StandardClock,
+	>,
+	#[cfg(feature = "speed-limit")] write_limit: async_speed_limit::Limiter<
 		async_speed_limit::clock::StandardClock,
 	>,
 ) -> std::io::Result<()> {
+	let (muxrx, muxtx) = mux.into_async_rw().into_split();
 	let mut muxrx = muxrx.compat();
-	loop {
-		let buf = muxrx.fill_buf().await?;
-		if buf.is_empty() {
-			tcptx.flush().await?;
-			return Ok(());
-		}
+	let mut muxtx = muxtx.compat_write();
 
-		#[cfg(feature = "speed-limit")]
-		limiter.consume(buf.len()).await;
+	let (tcprx, mut tcptx) = tcp.into_split();
 
-		let i = tcptx.write(buf).await?;
-		if i == 0 {
-			return Err(std::io::ErrorKind::WriteZero.into());
-		}
+	#[cfg(feature = "speed-limit")]
+	let tcprx = read_limit.limit(tcprx);
+	#[cfg(feature = "speed-limit")]
+	let mut tcptx = write_limit.limit(tcptx);
 
-		muxrx.consume(i);
-	}
-}
-
-async fn copy_write_fast(
-	muxtx: MuxStreamWrite<WispStreamWrite>,
-	tcprx: OwnedReadHalf,
-	#[cfg(feature = "speed-limit")] limiter: async_speed_limit::Limiter<
-		async_speed_limit::clock::StandardClock,
-	>,
-) -> anyhow::Result<()> {
 	let mut tcprx = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
-	loop {
-		let buf = tcprx.fill_buf().await?;
 
-		let len = buf.len();
-		if len == 0 {
-			return Ok(());
-		}
+	select! {
+		x = tokio::io::copy_buf(&mut muxrx, &mut tcptx) => x?,
+		x = tokio::io::copy(&mut tcprx, &mut muxtx) => x?,
+	};
 
-		#[cfg(feature = "speed-limit")]
-		limiter.consume(buf.len()).await;
-
-		muxtx.write(&buf).await?;
-		tcprx.consume(len);
-	}
+	Ok(())
 }
 
 async fn resolve_stream(
@@ -147,13 +127,15 @@ async fn forward_stream(
 			let closer = muxstream.get_close_handle();
 
 			let ret: anyhow::Result<()> = async {
-				let (muxread, muxwrite) = muxstream.into_split();
-				let muxread = muxread.into_stream().into_asyncread();
-				let (tcpread, tcpwrite) = stream.into_split();
-				select! {
-					x = copy_read_fast(muxread, tcpwrite, #[cfg(feature = "speed-limit")] write_limit) => x?,
-					x = copy_write_fast(muxwrite, tcpread, #[cfg(feature = "speed-limit")] read_limit) => x?,
-				}
+				copy_fast(
+					muxstream,
+					stream,
+					#[cfg(feature = "speed-limit")]
+					read_limit,
+					#[cfg(feature = "speed-limit")]
+					write_limit,
+				)
+				.await?;
 				Ok(())
 			}
 			.await;
@@ -169,6 +151,8 @@ async fn forward_stream(
 		}
 		ClientStream::Udp(stream) => {
 			let closer = muxstream.get_close_handle();
+			let (mut read, write) = muxstream.into_split();
+			let mut write = write.into_async_write().compat_write();
 
 			let ret: anyhow::Result<()> = async move {
 				let mut data = vec![0u8; 65507];
@@ -176,10 +160,10 @@ async fn forward_stream(
 					select! {
 						size = stream.recv(&mut data) => {
 							let size = size?;
-							muxstream.write(&data[..size]).await?;
+							write.write_all(&data[..size]).await?;
 						}
-						data = muxstream.read() => {
-							if let Some(data) = data? {
+						data = read.next() => {
+							if let Some(data) = data.transpose()? {
 								stream.send(&data).await?;
 							} else {
 								break Ok(());
@@ -202,8 +186,8 @@ async fn forward_stream(
 		#[cfg(feature = "twisp")]
 		ClientStream::Pty(cmd, pty) => {
 			let closer = muxstream.get_close_handle();
-			let id = muxstream.stream_id;
-			let (mut rx, mut tx) = muxstream.into_io().into_asyncrw().into_split();
+			let id = muxstream.get_stream_id();
+			let (mut rx, mut tx) = muxstream.into_async_rw().into_split();
 
 			match twisp::handle_twisp(id, &mut rx, &mut tx, twisp_map.clone(), pty, cmd).await {
 				Ok(()) => {
@@ -335,7 +319,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		.build();
 
 	let (mux, fut) = Box::pin(
-		Box::pin(ServerMux::create(
+		Box::pin(ServerMux::new(
 			read,
 			write,
 			buffer_size,
@@ -351,11 +335,8 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	debug!(
 		"new wisp client id {:?} connected with extensions {:?}, downgraded {:?}",
 		id,
-		mux.supported_extensions
-			.iter()
-			.map(|x| x.get_id())
-			.collect::<Vec<_>>(),
-		mux.downgraded
+		mux.get_extension_ids(),
+		mux.was_downgraded()
 	);
 
 	let mut set: JoinSet<()> = JoinSet::new();
@@ -369,11 +350,19 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	let ping_id = id.clone();
 	set.spawn(async move {
 		let mut interval = interval(Duration::from_secs(30));
-		while ping_mux
-			.send_ping(Payload::Bytes(BytesMut::new()))
-			.await
-			.is_ok()
-		{
+		let send_ping = || async {
+			let mut locked = ping_mux.lock_ws().await?;
+			if let Either::Left(ws) = &mut *locked {
+				<WispWsStreamWrite as SinkExt<tokio_websockets::Message>>::send(
+					ws,
+					tokio_websockets::Message::ping(&[] as &[u8]),
+				)
+				.await?;
+			}
+			anyhow::Ok(())
+		};
+
+		while (send_ping)().await.is_ok() {
 			trace!("sent ping to wisp client id {:?}", ping_id);
 			select! {
 				_ = interval.tick() => (),
@@ -382,7 +371,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		}
 	});
 
-	while let Some((connect, stream)) = mux.server_new_stream().await {
+	while let Some((connect, stream)) = mux.wait_for_stream().await {
 		set.spawn(handle_stream(
 			connect,
 			stream,

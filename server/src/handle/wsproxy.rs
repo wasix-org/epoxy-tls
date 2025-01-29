@@ -1,13 +1,14 @@
 use std::str::FromStr;
 
-use fastwebsockets::CloseCode;
+use futures_util::{SinkExt, StreamExt};
 use log::debug;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	select,
 };
+use tokio_websockets::CloseCode;
 use uuid::Uuid;
-use wisp_mux::{ws::Payload, CloseReason, ConnectPacket, StreamType};
+use wisp_mux::packet::{CloseReason, ConnectPacket, StreamType};
 
 use crate::{
 	handle::wisp::wispnet::route_wispnet,
@@ -25,13 +26,17 @@ pub async fn handle_wsproxy(
 	udp: bool,
 ) -> anyhow::Result<()> {
 	if udp && !CONFIG.stream.allow_wsproxy_udp {
-		let _ = ws.close(CloseCode::Error.into(), b"udp is blocked").await;
+		let _ = ws
+			.close(CloseCode::POLICY_VIOLATION.into(), "udp is blocked")
+			.await;
 		return Ok(());
 	}
 
 	let vec: Vec<&str> = path.split('/').last().unwrap().split(':').collect();
 	let Ok(port) = FromStr::from_str(vec[1]) else {
-		let _ = ws.close(CloseCode::Error.into(), b"invalid port").await;
+		let _ = ws
+			.close(CloseCode::POLICY_VIOLATION.into(), "invalid port")
+			.await;
 		return Ok(());
 	};
 	let connect = ConnectPacket {
@@ -40,15 +45,18 @@ pub async fn handle_wsproxy(
 		} else {
 			StreamType::Tcp
 		},
-		destination_hostname: vec[0].to_string(),
-		destination_port: port,
+		host: vec[0].to_string(),
+		port,
 	};
 
 	let requested_stream = connect.clone();
 
 	let Ok(resolved) = ClientStream::resolve(connect).await else {
 		let _ = ws
-			.close(CloseCode::Error.into(), b"failed to resolve host")
+			.close(
+				CloseCode::INTERNAL_SERVER_ERROR.into(),
+				"failed to resolve host",
+			)
 			.await;
 		return Ok(());
 	};
@@ -57,7 +65,10 @@ pub async fn handle_wsproxy(
 			let resolved = connect.clone();
 			let Ok(stream) = ClientStream::connect(connect).await else {
 				let _ = ws
-					.close(CloseCode::Error.into(), b"failed to connect to host")
+					.close(
+						CloseCode::INTERNAL_SERVER_ERROR.into(),
+						"failed to connect to host",
+					)
 					.await;
 				return Ok(());
 			};
@@ -67,7 +78,10 @@ pub async fn handle_wsproxy(
 			let resolved = connect.clone();
 			let Ok(stream) = route_wispnet(server, connect).await else {
 				let _ = ws
-					.close(CloseCode::Error.into(), b"failed to connect to host")
+					.close(
+						CloseCode::INTERNAL_SERVER_ERROR.into(),
+						"failed to connect to host",
+					)
 					.await;
 				return Ok(());
 			};
@@ -76,21 +90,23 @@ pub async fn handle_wsproxy(
 		ResolvedPacket::NoResolvedAddrs => {
 			let _ = ws
 				.close(
-					CloseCode::Error.into(),
-					b"host did not resolve to any addrs",
+					CloseCode::INTERNAL_SERVER_ERROR.into(),
+					"host did not resolve to any addrs",
 				)
 				.await;
 			return Ok(());
 		}
 		ResolvedPacket::Blocked => {
-			let _ = ws.close(CloseCode::Error.into(), b"host is blocked").await;
+			let _ = ws
+				.close(CloseCode::POLICY_VIOLATION.into(), "host is blocked")
+				.await;
 			return Ok(());
 		}
 		ResolvedPacket::Invalid => {
 			let _ = ws
 				.close(
-					CloseCode::Error.into(),
-					b"invalid host/port/type combination",
+					CloseCode::POLICY_VIOLATION.into(),
+					"invalid host/port/type combination",
 				)
 				.await;
 			return Ok(());
@@ -119,19 +135,20 @@ pub async fn handle_wsproxy(
 				loop {
 					select! {
 						x = ws.read() => {
-							match x? {
-								WebSocketFrame::Data(data) => {
+							match x.transpose()? {
+								Some(WebSocketFrame::Data(data)) => {
 									stream.write_all(&data).await?;
 								}
-								WebSocketFrame::Close => {
+								Some(WebSocketFrame::Close) => {
 									stream.shutdown().await?;
 								}
-								WebSocketFrame::Ignore => {}
+								Some(WebSocketFrame::Ignore) => {}
+								None => break Ok(()),
 							}
 						}
 						x = stream.fill_buf() => {
 							let x = x?;
-							ws.write(x).await?;
+							ws.write(x.to_vec()).await?;
 							let len = x.len();
 							stream.consume(len);
 						}
@@ -141,11 +158,11 @@ pub async fn handle_wsproxy(
 			.await;
 			match ret {
 				Ok(()) => {
-					let _ = ws.close(CloseCode::Normal.into(), b"").await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE.into(), "").await;
 				}
 				Err(x) => {
 					let _ = ws
-						.close(CloseCode::Normal.into(), x.to_string().as_bytes())
+						.close(CloseCode::NORMAL_CLOSURE.into(), &x.to_string())
 						.await;
 				}
 			}
@@ -156,15 +173,16 @@ pub async fn handle_wsproxy(
 				loop {
 					select! {
 						x = ws.read() => {
-							match x? {
-								WebSocketFrame::Data(data) => {
+							match x.transpose()? {
+								Some(WebSocketFrame::Data(data)) => {
 									stream.send(&data).await?;
 								}
-								WebSocketFrame::Close | WebSocketFrame::Ignore => {}
+								Some(WebSocketFrame::Close | WebSocketFrame::Ignore) => {}
+								None => break Ok(()),
 							}
 						}
 						size = stream.recv(&mut data) => {
-							ws.write(&data[..size?]).await?;
+							ws.write(data[..size?].to_vec()).await?;
 						}
 					}
 				}
@@ -172,11 +190,11 @@ pub async fn handle_wsproxy(
 			.await;
 			match ret {
 				Ok(()) => {
-					let _ = ws.close(CloseCode::Normal.into(), b"").await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE.into(), "").await;
 				}
 				Err(x) => {
 					let _ = ws
-						.close(CloseCode::Normal.into(), x.to_string().as_bytes())
+						.close(CloseCode::NORMAL_CLOSURE.into(), &x.to_string())
 						.await;
 				}
 			}
@@ -184,10 +202,10 @@ pub async fn handle_wsproxy(
 		#[cfg(feature = "twisp")]
 		ClientStream::Pty(_, _) => {
 			let _ = ws
-				.close(CloseCode::Error.into(), b"twisp is not supported")
+				.close(CloseCode::POLICY_VIOLATION, "twisp is not supported")
 				.await;
 		}
-		ClientStream::Wispnet(stream, mux_id) => {
+		ClientStream::Wispnet(mut stream, mux_id) => {
 			if let Some(client) = CLIENTS.lock().await.get(&mux_id) {
 				client
 					.0
@@ -200,21 +218,22 @@ pub async fn handle_wsproxy(
 				loop {
 					select! {
 						x = ws.read() => {
-							match x? {
-								WebSocketFrame::Data(data) => {
-									stream.write_payload(Payload::Bytes(data)).await?;
+							match x.transpose()? {
+								Some(WebSocketFrame::Data(data)) => {
+									stream.send(data.into()).await?;
 								}
-								WebSocketFrame::Close => {
+								Some(WebSocketFrame::Close) => {
 									stream.close(CloseReason::Voluntary).await?;
 								}
-								WebSocketFrame::Ignore => {}
+								Some(WebSocketFrame::Ignore) => {}
+								None => break,
 							}
 						}
-						x = stream.read() => {
-							let Some(x) = x? else {
+						x = stream.next() => {
+							let Some(x) = x else {
 								break;
 							};
-							ws.write(&x).await?;
+							ws.write(x?).await?;
 						}
 					}
 				}
@@ -228,11 +247,11 @@ pub async fn handle_wsproxy(
 
 			match ret {
 				Ok(()) => {
-					let _ = ws.close(CloseCode::Normal.into(), b"").await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE.into(), "").await;
 				}
 				Err(x) => {
 					let _ = ws
-						.close(CloseCode::Normal.into(), x.to_string().as_bytes())
+						.close(CloseCode::NORMAL_CLOSURE.into(), &x.to_string())
 						.await;
 				}
 			}
@@ -240,17 +259,21 @@ pub async fn handle_wsproxy(
 		ClientStream::NoResolvedAddrs => {
 			let _ = ws
 				.close(
-					CloseCode::Error.into(),
-					b"host did not resolve to any addrs",
+					CloseCode::INTERNAL_SERVER_ERROR.into(),
+					"host did not resolve to any addrs",
 				)
 				.await;
 			return Ok(());
 		}
 		ClientStream::Blocked => {
-			let _ = ws.close(CloseCode::Error.into(), b"host is blocked").await;
+			let _ = ws
+				.close(CloseCode::POLICY_VIOLATION.into(), "host is blocked")
+				.await;
 		}
 		ClientStream::Invalid => {
-			let _ = ws.close(CloseCode::Error.into(), b"host is invalid").await;
+			let _ = ws
+				.close(CloseCode::POLICY_VIOLATION.into(), "host is invalid")
+				.await;
 		}
 	}
 

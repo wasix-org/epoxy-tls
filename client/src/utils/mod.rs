@@ -1,7 +1,10 @@
 mod js;
 mod rustls;
 pub use js::*;
+use js_sys::Uint8Array;
 pub use rustls::*;
+use wasm_streams::writable::IntoSink;
+use wisp_mux::{ws::Payload, WispError};
 
 use std::{
 	pin::Pin,
@@ -9,19 +12,11 @@ use std::{
 };
 
 use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
-use futures_util::{ready, AsyncRead, Future, Stream};
+use futures_util::{ready, AsyncRead, Future, Sink, SinkExt, Stream};
 use http::{HeaderValue, Uri};
 use hyper::rt::Executor;
-use js_sys::Uint8Array;
 use pin_project_lite::pin_project;
-use send_wrapper::SendWrapper;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::WritableStreamDefaultWriter;
-use wisp_mux::{
-	ws::{Frame, WebSocketWrite},
-	WispError,
-};
 
 use crate::EpoxyError;
 
@@ -131,8 +126,7 @@ pub fn poll_read_buf<T: AsyncRead + ?Sized, B: BufMut>(
 	let n = {
 		let dst = buf.chunk_mut();
 
-		let dst =
-			unsafe { &mut *(std::ptr::from_mut::<UninitSlice>(dst) as *mut [u8]) };
+		let dst = unsafe { &mut *(std::ptr::from_mut::<UninitSlice>(dst) as *mut [u8]) };
 		ready!(io.poll_read(cx, dst)?)
 	};
 
@@ -174,26 +168,32 @@ impl<R: AsyncRead> Stream for ReaderStream<R> {
 	}
 }
 
-pub struct WispTransportWrite {
-	pub inner: SendWrapper<WritableStreamDefaultWriter>,
-}
+pub struct WispTransportWrite(pub IntoSink<'static>);
+unsafe impl Send for WispTransportWrite {}
 
-impl WebSocketWrite for WispTransportWrite {
-	async fn wisp_write_frame(&mut self, frame: Frame<'_>) -> Result<(), WispError> {
-		SendWrapper::new(async {
-			let chunk = Uint8Array::from(frame.payload.as_ref()).into();
-			JsFuture::from(self.inner.write_with_chunk(&chunk))
-				.await
-				.map(|_| ())
-				.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
-		})
-		.await
+impl Sink<Payload> for WispTransportWrite {
+	type Error = WispError;
+
+	fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.0
+			.poll_ready_unpin(cx)
+			.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
 	}
 
-	async fn wisp_close(&mut self) -> Result<(), WispError> {
-		SendWrapper::new(JsFuture::from(self.inner.abort()))
-			.await
-			.map(|_| ())
+	fn start_send(mut self: Pin<&mut Self>, item: Payload) -> Result<(), Self::Error> {
+		self.0
+			.start_send_unpin(Uint8Array::from(item.as_ref()).into())
+			.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
+	}
+
+	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.0
+			.poll_flush_unpin(cx)
+			.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
+	}
+	fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.0
+			.poll_close_unpin(cx)
 			.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
 	}
 }
