@@ -9,7 +9,7 @@ use futures::{channel::oneshot, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use crate::{
 	mux::inner::{FlowControl, StreamInfo, WsEvent},
 	packet::{ClosePacket, CloseReason, Packet},
-	ws::{Payload, WebSocketWrite},
+	ws::{Payload, TransportWrite},
 	LockedWebSocketWrite, WispError,
 };
 
@@ -35,7 +35,7 @@ macro_rules! unlock {
 	};
 }
 
-pub struct MuxStreamRead<W: WebSocketWrite> {
+pub struct MuxStreamRead<W: TransportWrite> {
 	inner: flume::r#async::RecvStream<'static, Payload>,
 	write: LockedWebSocketWrite<W>,
 	info: Arc<StreamInfo>,
@@ -44,7 +44,7 @@ pub struct MuxStreamRead<W: WebSocketWrite> {
 	chunk: Option<Payload>,
 }
 
-impl<W: WebSocketWrite> MuxStreamRead<W> {
+impl<W: TransportWrite> MuxStreamRead<W> {
 	fn new(
 		inner: flume::Receiver<Payload>,
 		write: LockedWebSocketWrite<W>,
@@ -73,7 +73,7 @@ impl<W: WebSocketWrite> MuxStreamRead<W> {
 	}
 }
 
-impl<W: WebSocketWrite> Stream for MuxStreamRead<W> {
+impl<W: TransportWrite> Stream for MuxStreamRead<W> {
 	type Item = Result<Payload, WispError>;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -124,7 +124,7 @@ impl<W: WebSocketWrite> Stream for MuxStreamRead<W> {
 	}
 }
 
-pub struct MuxStreamWrite<W: WebSocketWrite> {
+pub struct MuxStreamWrite<W: TransportWrite> {
 	inner: flume::r#async::SendSink<'static, WsEvent<W>>,
 	write: LockedWebSocketWrite<W>,
 	info: Arc<StreamInfo>,
@@ -134,7 +134,7 @@ pub struct MuxStreamWrite<W: WebSocketWrite> {
 	oneshot: Option<oneshot::Receiver<Result<(), WispError>>>,
 }
 
-impl<W: WebSocketWrite> MuxStreamWrite<W> {
+impl<W: TransportWrite> MuxStreamWrite<W> {
 	fn new(
 		inner: flume::Sender<WsEvent<W>>,
 		write: LockedWebSocketWrite<W>,
@@ -203,7 +203,7 @@ impl<W: WebSocketWrite> MuxStreamWrite<W> {
 	}
 }
 
-impl<W: WebSocketWrite> Sink<Payload> for MuxStreamWrite<W> {
+impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 	type Error = WispError;
 
 	fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -277,12 +277,12 @@ impl<W: WebSocketWrite> Sink<Payload> for MuxStreamWrite<W> {
 	}
 }
 
-pub struct MuxStream<W: WebSocketWrite> {
+pub struct MuxStream<W: TransportWrite> {
 	read: MuxStreamRead<W>,
 	write: MuxStreamWrite<W>,
 }
 
-impl<W: WebSocketWrite> MuxStream<W> {
+impl<W: TransportWrite> MuxStream<W> {
 	pub(crate) fn new(
 		rx: flume::Receiver<Payload>,
 		tx: flume::Sender<WsEvent<W>>,
@@ -321,7 +321,7 @@ impl<W: WebSocketWrite> MuxStream<W> {
 	}
 }
 
-impl<W: WebSocketWrite> Stream for MuxStream<W> {
+impl<W: TransportWrite> Stream for MuxStream<W> {
 	type Item = <MuxStreamRead<W> as Stream>::Item;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -333,7 +333,7 @@ impl<W: WebSocketWrite> Stream for MuxStream<W> {
 	}
 }
 
-impl<W: WebSocketWrite> Sink<Payload> for MuxStream<W> {
+impl<W: TransportWrite> Sink<Payload> for MuxStream<W> {
 	type Error = <MuxStreamWrite<W> as Sink<Payload>>::Error;
 
 	fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

@@ -5,7 +5,7 @@ use crate::{
 	mux::send_info_packet,
 	packet::{ConnectPacket, ContinuePacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
-	ws::{WebSocketRead, WebSocketReadExt, WebSocketWrite},
+	ws::{TransportRead, TransportReadExt, TransportWrite},
 	LockedWebSocketWrite, Role, WispError,
 };
 
@@ -18,7 +18,7 @@ use super::{
 
 pub(crate) struct ClientActor;
 
-impl<W: WebSocketWrite> MultiplexorActor<W> for ClientActor {
+impl<W: TransportWrite> MultiplexorActor<W> for ClientActor {
 	fn handle_connect_packet(
 		&mut self,
 		_: crate::stream::MuxStream<W>,
@@ -54,10 +54,10 @@ impl<W: WebSocketWrite> MultiplexorActor<W> for ClientActor {
 
 pub struct ClientImpl;
 
-impl<W: WebSocketWrite> MultiplexorImpl<W> for ClientImpl {
+impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 	type Actor = ClientActor;
 
-	async fn handshake<R: WebSocketRead>(
+	async fn handshake<R: TransportRead>(
 		&mut self,
 		rx: &mut R,
 		tx: &mut LockedWebSocketWrite<W>,
@@ -126,14 +126,14 @@ impl<W: WebSocketWrite> MultiplexorImpl<W> for ClientImpl {
 	}
 }
 
-impl<W: WebSocketWrite> Multiplexor<ClientImpl, W> {
+impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
 	/// Create a new client side multiplexor.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
 	/// if the extensions you need are available after the multiplexor has been created.
 	#[expect(clippy::new_ret_no_self)]
-	pub async fn new<R: WebSocketRead>(
+	pub async fn new<R: TransportRead>(
 		rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,

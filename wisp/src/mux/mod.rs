@@ -15,7 +15,7 @@ pub type ClientMux<W> = Multiplexor<ClientImpl, W>;
 use crate::{
 	extensions::{udp::UdpProtocolExtension, AnyProtocolExtension, AnyProtocolExtensionBuilder},
 	packet::{CloseReason, InfoPacket, Packet, PacketType},
-	ws::{WebSocketRead, WebSocketWrite},
+	ws::{TransportRead, TransportWrite},
 	LockedWebSocketWrite, LockedWebSocketWriteGuard, Role, WispError, WISP_VERSION,
 };
 
@@ -43,7 +43,7 @@ impl WispHandshakeResultKind {
 	}
 }
 
-async fn handle_handshake<R: WebSocketRead, W: WebSocketWrite>(
+async fn handle_handshake<R: TransportRead, W: TransportWrite>(
 	read: &mut R,
 	write: &mut LockedWebSocketWrite<W>,
 	extensions: &mut [AnyProtocolExtension],
@@ -58,7 +58,7 @@ async fn handle_handshake<R: WebSocketRead, W: WebSocketWrite>(
 	Ok(())
 }
 
-async fn send_info_packet<W: WebSocketWrite>(
+async fn send_info_packet<W: TransportWrite>(
 	write: &mut LockedWebSocketWrite<W>,
 	builders: &mut [AnyProtocolExtensionBuilder],
 	role: Role,
@@ -104,10 +104,10 @@ fn get_supported_extensions(
 		.collect()
 }
 
-trait MultiplexorImpl<W: WebSocketWrite> {
+trait MultiplexorImpl<W: TransportWrite> {
 	type Actor: MultiplexorActor<W> + 'static;
 
-	async fn handshake<R: WebSocketRead>(
+	async fn handshake<R: TransportRead>(
 		&mut self,
 		rx: &mut R,
 		tx: &mut LockedWebSocketWrite<W>,
@@ -122,7 +122,7 @@ trait MultiplexorImpl<W: WebSocketWrite> {
 }
 
 #[expect(private_bounds)]
-pub struct Multiplexor<M: MultiplexorImpl<W>, W: WebSocketWrite> {
+pub struct Multiplexor<M: MultiplexorImpl<W>, W: TransportWrite> {
 	mux: M,
 
 	downgraded: bool,
@@ -133,7 +133,7 @@ pub struct Multiplexor<M: MultiplexorImpl<W>, W: WebSocketWrite> {
 }
 
 #[expect(private_bounds)]
-impl<M: MultiplexorImpl<W>, W: WebSocketWrite> Multiplexor<M, W> {
+impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 	async fn create<R>(
 		mut rx: R,
 		tx: W,
@@ -142,7 +142,7 @@ impl<M: MultiplexorImpl<W>, W: WebSocketWrite> Multiplexor<M, W> {
 		actor: M::Actor,
 	) -> Result<MuxResult<M, W>, WispError>
 	where
-		R: WebSocketRead,
+		R: TransportRead,
 	{
 		let mut tx = LockedWebSocketWrite::new(tx);
 
@@ -256,13 +256,13 @@ pub type MultiplexorActorFuture = Pin<Box<dyn Future<Output = Result<(), WispErr
 pub struct MuxResult<M, W>(Multiplexor<M, W>, MultiplexorActorFuture)
 where
 	M: MultiplexorImpl<W>,
-	W: WebSocketWrite;
+	W: TransportWrite;
 
 #[expect(private_bounds)]
 impl<M, W> MuxResult<M, W>
 where
 	M: MultiplexorImpl<W>,
-	W: WebSocketWrite,
+	W: TransportWrite,
 {
 	/// Require no protocol extensions.
 	pub fn with_no_required_extensions(self) -> (Multiplexor<M, W>, MultiplexorActorFuture) {

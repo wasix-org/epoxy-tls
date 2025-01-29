@@ -5,7 +5,7 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 
 use crate::{
 	extensions::{AnyProtocolExtension, AnyProtocolExtensionBuilder},
-	ws::{Payload, PayloadMut, PayloadRef, WebSocketRead, WebSocketWrite},
+	ws::{Payload, PayloadMut, PayloadRef, TransportRead, TransportWrite},
 	LockedWebSocketWrite, Role, WispError, WISP_VERSION,
 };
 
@@ -404,10 +404,10 @@ pub(crate) enum MaybeExtensionPacket<'a> {
 }
 
 impl MaybeExtensionPacket<'static> {
-	pub(crate) async fn decode<W: WebSocketWrite>(
+	pub(crate) async fn decode<W: TransportWrite>(
 		mut packet: Payload,
 		extensions: &mut [AnyProtocolExtension],
-		rx: &mut dyn WebSocketRead,
+		rx: &mut dyn TransportRead,
 		tx: &mut LockedWebSocketWrite<W>,
 	) -> Result<Self, WispError> {
 		if packet.remaining() < size_of::<u8>() + size_of::<u32>() {

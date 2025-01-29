@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes};
 
 use crate::{
-	ws::{PayloadMut, WebSocketRead, WebSocketWrite},
+	ws::{PayloadMut, TransportRead, TransportWrite},
 	Role, WispError,
 };
 
@@ -112,8 +112,8 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 	/// This should be used to send or receive data before any streams are created.
 	async fn handle_handshake(
 		&mut self,
-		read: &mut dyn WebSocketRead,
-		write: &mut dyn WebSocketWrite,
+		read: &mut dyn TransportRead,
+		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
 		let _ = (read, write);
 		Ok(())
@@ -124,8 +124,8 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 		&mut self,
 		packet_type: u8,
 		packet: Bytes,
-		read: &mut dyn WebSocketRead,
-		write: &mut dyn WebSocketWrite,
+		read: &mut dyn TransportRead,
+		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
 		let _ = (packet_type, packet, read, write);
 		Ok(())

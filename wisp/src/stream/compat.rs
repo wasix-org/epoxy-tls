@@ -14,15 +14,15 @@ use pin_project::pin_project;
 use crate::{
 	locked_sink::LockedWebSocketWrite,
 	packet::{ClosePacket, CloseReason, Packet},
-	ws::{Payload, WebSocketWrite},
+	ws::{Payload, TransportWrite},
 	WispError,
 };
 
 use super::{MuxStream, MuxStreamRead, MuxStreamWrite, StreamInfo, WsEvent};
 
-struct MapToIo<W: WebSocketWrite>(MuxStreamRead<W>);
+struct MapToIo<W: TransportWrite>(MuxStreamRead<W>);
 
-impl<W: WebSocketWrite> Stream for MapToIo<W> {
+impl<W: TransportWrite> Stream for MapToIo<W> {
 	type Item = Result<Payload, std::io::Error>;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -32,12 +32,12 @@ impl<W: WebSocketWrite> Stream for MapToIo<W> {
 
 // TODO: don't use `futures` for this so get_close_reason etc can be implemented
 #[pin_project]
-pub struct MuxStreamAsyncRead<W: WebSocketWrite> {
+pub struct MuxStreamAsyncRead<W: TransportWrite> {
 	#[pin]
 	inner: IntoAsyncRead<MapToIo<W>>,
 }
 
-impl<W: WebSocketWrite> MuxStreamAsyncRead<W> {
+impl<W: TransportWrite> MuxStreamAsyncRead<W> {
 	pub(crate) fn new(inner: MuxStreamRead<W>) -> Self {
 		Self {
 			inner: MapToIo(inner).into_async_read(),
@@ -45,7 +45,7 @@ impl<W: WebSocketWrite> MuxStreamAsyncRead<W> {
 	}
 }
 
-impl<W: WebSocketWrite> AsyncRead for MuxStreamAsyncRead<W> {
+impl<W: TransportWrite> AsyncRead for MuxStreamAsyncRead<W> {
 	fn poll_read(
 		self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
@@ -63,7 +63,7 @@ impl<W: WebSocketWrite> AsyncRead for MuxStreamAsyncRead<W> {
 	}
 }
 
-impl<W: WebSocketWrite> AsyncBufRead for MuxStreamAsyncRead<W> {
+impl<W: TransportWrite> AsyncBufRead for MuxStreamAsyncRead<W> {
 	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
 		self.project().inner.poll_fill_buf(cx)
 	}
@@ -73,7 +73,7 @@ impl<W: WebSocketWrite> AsyncBufRead for MuxStreamAsyncRead<W> {
 	}
 }
 
-pub struct MuxStreamAsyncWrite<W: WebSocketWrite> {
+pub struct MuxStreamAsyncWrite<W: TransportWrite> {
 	inner: flume::r#async::SendSink<'static, WsEvent<W>>,
 	write: LockedWebSocketWrite<W>,
 	info: Arc<StreamInfo>,
@@ -81,7 +81,7 @@ pub struct MuxStreamAsyncWrite<W: WebSocketWrite> {
 	oneshot: Option<oneshot::Receiver<Result<(), WispError>>>,
 }
 
-impl<W: WebSocketWrite> MuxStreamAsyncWrite<W> {
+impl<W: TransportWrite> MuxStreamAsyncWrite<W> {
 	pub(crate) fn new(inner: MuxStreamWrite<W>) -> Self {
 		Self {
 			inner: inner.inner,
@@ -98,7 +98,7 @@ impl<W: WebSocketWrite> MuxStreamAsyncWrite<W> {
 	}
 }
 
-impl<W: WebSocketWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
+impl<W: TransportWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
 	fn poll_write(
 		mut self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
@@ -160,14 +160,14 @@ impl<W: WebSocketWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
 }
 
 #[pin_project]
-pub struct MuxStreamAsyncRW<W: WebSocketWrite> {
+pub struct MuxStreamAsyncRW<W: TransportWrite> {
 	#[pin]
 	read: MuxStreamAsyncRead<W>,
 	#[pin]
 	write: MuxStreamAsyncWrite<W>,
 }
 
-impl<W: WebSocketWrite> MuxStreamAsyncRW<W> {
+impl<W: TransportWrite> MuxStreamAsyncRW<W> {
 	pub(crate) fn new(old: MuxStream<W>) -> Self {
 		Self {
 			read: MuxStreamAsyncRead::new(old.read),
@@ -185,7 +185,7 @@ impl<W: WebSocketWrite> MuxStreamAsyncRW<W> {
 	}
 }
 
-impl<W: WebSocketWrite> AsyncRead for MuxStreamAsyncRW<W> {
+impl<W: TransportWrite> AsyncRead for MuxStreamAsyncRW<W> {
 	fn poll_read(
 		self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
@@ -203,7 +203,7 @@ impl<W: WebSocketWrite> AsyncRead for MuxStreamAsyncRW<W> {
 	}
 }
 
-impl<W: WebSocketWrite> AsyncBufRead for MuxStreamAsyncRW<W> {
+impl<W: TransportWrite> AsyncBufRead for MuxStreamAsyncRW<W> {
 	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
 		self.project().read.poll_fill_buf(cx)
 	}
@@ -213,7 +213,7 @@ impl<W: WebSocketWrite> AsyncBufRead for MuxStreamAsyncRW<W> {
 	}
 }
 
-impl<W: WebSocketWrite> AsyncWrite for MuxStreamAsyncRW<W> {
+impl<W: TransportWrite> AsyncWrite for MuxStreamAsyncRW<W> {
 	fn poll_write(
 		self: Pin<&mut Self>,
 		cx: &mut Context<'_>,

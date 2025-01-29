@@ -2,13 +2,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures::{Sink, SinkExt, Stream, StreamExt};
 
-use super::{WebSocketRead, WebSocketWrite};
+use super::{TransportRead, TransportWrite};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 	mutex.lock().expect("WebSocketSplit mutex was poisoned")
 }
 
-pub(crate) fn split<S: WebSocketRead + WebSocketWrite>(
+pub(crate) fn split<S: TransportRead + TransportWrite>(
 	s: S,
 ) -> (WebSocketSplitRead<S>, WebSocketSplitWrite<S>) {
 	let inner = Arc::new(Mutex::new(s));
@@ -19,9 +19,9 @@ pub(crate) fn split<S: WebSocketRead + WebSocketWrite>(
 	)
 }
 
-pub struct WebSocketSplitRead<S: WebSocketRead + WebSocketWrite>(Arc<Mutex<S>>);
+pub struct WebSocketSplitRead<S: TransportRead + TransportWrite>(Arc<Mutex<S>>);
 
-impl<S: WebSocketRead + WebSocketWrite> Stream for WebSocketSplitRead<S> {
+impl<S: TransportRead + TransportWrite> Stream for WebSocketSplitRead<S> {
 	type Item = S::Item;
 
 	fn poll_next(
@@ -32,9 +32,9 @@ impl<S: WebSocketRead + WebSocketWrite> Stream for WebSocketSplitRead<S> {
 	}
 }
 
-pub struct WebSocketSplitWrite<S: WebSocketRead + WebSocketWrite>(Arc<Mutex<S>>);
+pub struct WebSocketSplitWrite<S: TransportRead + TransportWrite>(Arc<Mutex<S>>);
 
-impl<S: WebSocketRead + WebSocketWrite + Sink<T>, T> Sink<T> for WebSocketSplitWrite<S> {
+impl<S: TransportRead + TransportWrite + Sink<T>, T> Sink<T> for WebSocketSplitWrite<S> {
 	type Error = <S as Sink<T>>::Error;
 
 	fn poll_ready(

@@ -22,11 +22,11 @@ use crate::{
 		PacketType, StreamType,
 	},
 	stream::MuxStream,
-	ws::{Payload, WebSocketRead, WebSocketWrite},
+	ws::{Payload, TransportRead, TransportWrite},
 	LockedWebSocketWrite, WispError,
 };
 
-pub(crate) enum WsEvent<W: WebSocketWrite> {
+pub(crate) enum WsEvent<W: TransportWrite> {
 	Close(u32, ClosePacket, oneshot::Sender<Result<(), WispError>>),
 	CreateStream(
 		ConnectPacket,
@@ -135,7 +135,7 @@ impl StreamInfo {
 	}
 }
 
-pub(crate) trait MultiplexorActor<W: WebSocketWrite>: Send {
+pub(crate) trait MultiplexorActor<W: TransportWrite>: Send {
 	fn handle_connect_packet(
 		&mut self,
 		stream: MuxStream<W>,
@@ -164,14 +164,14 @@ pub(crate) trait MultiplexorActor<W: WebSocketWrite>: Send {
 	fn get_flow_control(ty: StreamType, flow_stream_types: &[u8]) -> FlowControl;
 }
 
-struct MuxStart<R: WebSocketRead, W: WebSocketWrite> {
+struct MuxStart<R: TransportRead, W: TransportWrite> {
 	rx: R,
 	downgrade: Option<Packet<'static>>,
 	extensions: Vec<AnyProtocolExtension>,
 	actor_rx: flume::Receiver<WsEvent<W>>,
 }
 
-pub(crate) struct MuxInner<R: WebSocketRead, W: WebSocketWrite, M: MultiplexorActor<W>> {
+pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> {
 	start: Option<MuxStart<R, W>>,
 	tx: LockedWebSocketWrite<W>,
 	flow_stream_types: Box<[u8]>,
@@ -185,12 +185,12 @@ pub(crate) struct MuxInner<R: WebSocketRead, W: WebSocketWrite, M: MultiplexorAc
 	actor_tx: flume::Sender<WsEvent<W>>,
 }
 
-pub(crate) struct MuxInnerResult<R: WebSocketRead, W: WebSocketWrite, M: MultiplexorActor<W>> {
+pub(crate) struct MuxInnerResult<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> {
 	pub mux: MuxInner<R, W, M>,
 	pub actor_tx: flume::Sender<WsEvent<W>>,
 }
 
-impl<R: WebSocketRead, W: WebSocketWrite, M: MultiplexorActor<W>> MuxInner<R, W, M> {
+impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W, M> {
 	#[expect(clippy::new_ret_no_self)]
 	pub fn new(
 		rx: R,

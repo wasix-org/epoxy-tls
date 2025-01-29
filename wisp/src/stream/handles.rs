@@ -4,7 +4,7 @@ use futures::channel::oneshot;
 
 use crate::{
 	packet::{ClosePacket, CloseReason},
-	ws::WebSocketWrite,
+	ws::TransportWrite,
 	WispError,
 };
 
@@ -12,12 +12,12 @@ use super::{StreamInfo, WsEvent};
 
 /// Close handle for a multiplexor stream.
 #[derive(Clone)]
-pub struct MuxStreamCloser<W: WebSocketWrite> {
+pub struct MuxStreamCloser<W: TransportWrite> {
 	pub(crate) info: Arc<StreamInfo>,
 	pub(crate) inner: flume::Sender<WsEvent<W>>,
 }
 
-impl<W: WebSocketWrite + 'static> MuxStreamCloser<W> {
+impl<W: TransportWrite + 'static> MuxStreamCloser<W> {
 	/// Close the stream. You will no longer be able to write or read after this has been called.
 	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
 		if self.inner.is_disconnected() {

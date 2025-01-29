@@ -4,7 +4,7 @@ use crate::{
 	locked_sink::LockedWebSocketWrite,
 	packet::{CloseReason, ConnectPacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
-	ws::{Payload, WebSocketRead, WebSocketReadExt, WebSocketWrite},
+	ws::{Payload, TransportRead, TransportReadExt, TransportWrite},
 	Role, WispError,
 };
 
@@ -15,11 +15,11 @@ use super::{
 	WispHandshakeResultKind, WispV2Handshake,
 };
 
-pub(crate) struct ServerActor<W: WebSocketWrite> {
+pub(crate) struct ServerActor<W: TransportWrite> {
 	stream_tx: flume::Sender<(ConnectPacket, MuxStream<W>)>,
 }
 
-impl<W: WebSocketWrite> MultiplexorActor<W> for ServerActor<W> {
+impl<W: TransportWrite> MultiplexorActor<W> for ServerActor<W> {
 	fn handle_connect_packet(
 		&mut self,
 		stream: MuxStream<W>,
@@ -62,15 +62,15 @@ impl<W: WebSocketWrite> MultiplexorActor<W> for ServerActor<W> {
 	}
 }
 
-pub struct ServerImpl<W: WebSocketWrite> {
+pub struct ServerImpl<W: TransportWrite> {
 	buffer_size: u32,
 	stream_rx: flume::Receiver<(ConnectPacket, MuxStream<W>)>,
 }
 
-impl<W: WebSocketWrite> MultiplexorImpl<W> for ServerImpl<W> {
+impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 	type Actor = ServerActor<W>;
 
-	async fn handshake<R: WebSocketRead>(
+	async fn handshake<R: TransportRead>(
 		&mut self,
 		rx: &mut R,
 		tx: &mut LockedWebSocketWrite<W>,
@@ -165,14 +165,14 @@ impl<W: WebSocketWrite> MultiplexorImpl<W> for ServerImpl<W> {
 	}
 }
 
-impl<W: WebSocketWrite> Multiplexor<ServerImpl<W>, W> {
+impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 	/// Create a new server-side multiplexor.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
 	/// if the extensions you need are available after the multiplexor has been created.
 	#[expect(clippy::new_ret_no_self)]
-	pub async fn new<R: WebSocketRead>(
+	pub async fn new<R: TransportRead>(
 		rx: R,
 		tx: W,
 		buffer_size: u32,

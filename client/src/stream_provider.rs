@@ -19,7 +19,7 @@ use wisp_mux::{
 	extensions::{udp::UdpProtocolExtensionBuilder, AnyProtocolExtensionBuilder},
 	packet::StreamType,
 	stream::{MuxStream, MuxStreamAsyncRW},
-	ws::{WebSocketRead, WebSocketWrite},
+	ws::{TransportRead, TransportWrite},
 	ClientMux, WispV2Handshake,
 };
 
@@ -33,8 +33,8 @@ pub type ProviderUnencryptedStream = MuxStream<ProviderWispTransportWrite>;
 pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW<ProviderWispTransportWrite>;
 pub type ProviderTlsAsyncRW = IgnoreCloseNotify;
 pub type ProviderAsyncRW = Either<ProviderTlsAsyncRW, ProviderUnencryptedAsyncRW>;
-pub type ProviderWispTransportRead = Pin<Box<dyn WebSocketRead>>;
-pub type ProviderWispTransportWrite = Pin<Box<dyn WebSocketWrite>>;
+pub type ProviderWispTransportRead = Pin<Box<dyn TransportRead>>;
+pub type ProviderWispTransportWrite = Pin<Box<dyn TransportWrite>>;
 pub type ProviderWispTransportGenerator = Box<
 	dyn Fn(
 			bool,

@@ -16,13 +16,13 @@ use std::{
 use futures::Sink;
 use slab::Slab;
 
-use crate::ws::{Payload, WebSocketWrite};
+use crate::ws::{Payload, TransportWrite};
 
 // it would be nice to have type_alias_bounds but oh well
 #[expect(type_alias_bounds)]
-pub(crate) type LockedWebSocketWrite<I: WebSocketWrite> = LockedSink<I, Payload>;
+pub(crate) type LockedWebSocketWrite<I: TransportWrite> = LockedSink<I, Payload>;
 #[expect(type_alias_bounds)]
-pub type LockedWebSocketWriteGuard<I: WebSocketWrite> = LockedSinkGuard<I, Payload>;
+pub type LockedWebSocketWriteGuard<I: TransportWrite> = LockedSinkGuard<I, Payload>;
 
 pub(crate) enum Waiter {
 	Sleeping(Waker),

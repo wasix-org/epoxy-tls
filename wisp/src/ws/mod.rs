@@ -59,25 +59,25 @@ impl Deref for PayloadRef<'_> {
 pub type Payload = Bytes;
 pub type PayloadMut = BytesMut;
 
-pub trait WebSocketRead:
+pub trait TransportRead:
 	Stream<Item = Result<Payload, WispError>> + Send + Unpin + 'static
 {
 }
-impl<S: Stream<Item = Result<Payload, WispError>> + Send + Unpin + 'static> WebSocketRead for S {}
+impl<S: Stream<Item = Result<Payload, WispError>> + Send + Unpin + 'static> TransportRead for S {}
 
-pub(crate) trait WebSocketReadExt: WebSocketRead {
+pub(crate) trait TransportReadExt: TransportRead {
 	async fn next_erroring(&mut self) -> Result<Payload, WispError> {
 		self.next().await.ok_or(WispError::WsImplSocketClosed)?
 	}
 }
-impl<S: WebSocketRead> WebSocketReadExt for S {}
+impl<S: TransportRead> TransportReadExt for S {}
 
-pub trait WebSocketWrite: Sink<Payload, Error = WispError> + Send + Unpin + 'static {}
-impl<S: Sink<Payload, Error = WispError> + Send + Unpin + 'static> WebSocketWrite for S {}
+pub trait TransportWrite: Sink<Payload, Error = WispError> + Send + Unpin + 'static {}
+impl<S: Sink<Payload, Error = WispError> + Send + Unpin + 'static> TransportWrite for S {}
 
-pub trait WebSocketExt: WebSocketRead + WebSocketWrite + Sized {
+pub trait TransportExt: TransportRead + TransportWrite + Sized {
 	fn split_fast(self) -> (WebSocketSplitRead<Self>, WebSocketSplitWrite<Self>) {
 		split::split(self)
 	}
 }
-impl<S: WebSocketRead + WebSocketWrite + Sized> WebSocketExt for S {}
+impl<S: TransportRead + TransportWrite + Sized> TransportExt for S {}

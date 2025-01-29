@@ -13,7 +13,7 @@ use log::{debug, error, trace};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tokio_websockets::Limits;
 use wisp_mux::ws::{
-	TokioWebsocketsTransport, WebSocketExt, WebSocketSplitRead, WebSocketSplitWrite,
+	TokioWebsocketsTransport, TransportExt, WebSocketSplitRead, WebSocketSplitWrite,
 };
 
 use crate::{

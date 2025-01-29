@@ -34,7 +34,7 @@ use wisp_mux::{
 		AnyProtocolExtensionBuilder, ProtocolExtensionListExt,
 	},
 	packet::StreamType,
-	ws::{TokioWebsocketsTransport, WebSocketWrite, WebSocketExt},
+	ws::{TokioWebsocketsTransport, TransportWrite, TransportExt},
 	ClientMux, WispError, WispV2Handshake,
 };
 
@@ -98,7 +98,7 @@ async fn create_mux(
 	opts: &Cli,
 ) -> Result<
 	(
-		ClientMux<impl WebSocketWrite>,
+		ClientMux<impl TransportWrite>,
 		impl Future<Output = Result<(), WispError>> + Send,
 	),
 	Box<dyn Error + Send + Sync>,

@@ -17,7 +17,7 @@ use wisp_mux::{
 	},
 	packet::{CloseReason, ConnectPacket},
 	stream::{MuxStream, MuxStreamRead, MuxStreamWrite},
-	ws::{WebSocketRead, WebSocketWrite},
+	ws::{TransportRead, TransportWrite},
 	ClientMux, Role, WispError, WispV2Handshake,
 };
 
@@ -98,8 +98,8 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 
 	async fn handle_handshake(
 		&mut self,
-		_: &mut dyn WebSocketRead,
-		_: &mut dyn WebSocketWrite,
+		_: &mut dyn TransportRead,
+		_: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
 		Ok(())
 	}
@@ -108,8 +108,8 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 		&mut self,
 		packet_type: u8,
 		mut packet: Bytes,
-		_: &mut dyn WebSocketRead,
-		write: &mut dyn WebSocketWrite,
+		_: &mut dyn TransportRead,
+		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
 		if packet_type == Self::ID {
 			if packet.remaining() < 4 {
