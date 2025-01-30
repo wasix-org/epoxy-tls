@@ -8,5 +8,8 @@ export default defineConfig({
 			{ src: "node_modules/@mercuryworkshop/epoxy-tls/minimal/epoxy.wasm", dest: "epoxy" },
 		]
 	})],
-	base: './'
+	base: './',
+	build: {
+		target: "es2022",
+	}
 });
