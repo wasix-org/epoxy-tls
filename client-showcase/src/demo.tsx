@@ -328,24 +328,38 @@ export const Demo: Component<{}, {
 	req: EpoxyRequest,
 }> = function() {
 	this.css = `
-		display: grid;
-		grid-template-areas:
-			"a b"
-			"c c";
-		grid-auto-rows: 24rem;
-		grid-auto-columns: 1fr 1fr;
-		gap: 4px;
+		.inner {
+			display: grid;
+			grid-template-areas:
+				"a b"
+				"c c";
+			grid-auto-rows: 24rem;
+			grid-auto-columns: 1fr 1fr;
+			gap: 4px;
+		}
 
 		div[area="a"] { grid-area: a; }
 		div[area="b"] { grid-area: b; }
 		div[area="c"] { grid-area: c; }
+
+		@media (max-width: 850px) {
+			.inner {
+				display: flex;
+				flex-direction: column;
+			}
+			.inner * {
+				flex: 0 0 24rem;
+			}
+		}
 	`;
 
 	return (
 		<div>
-			<RequestBuilder bind:req={use(this.req)} area="a" />
-			<RequestSender req={use(this.req)} area="b" />
-			<WebsocketLogger area="c" />
+			<div class="inner">
+				<RequestBuilder bind:req={use(this.req)} area="a" />
+				<RequestSender req={use(this.req)} area="b" />
+				<WebsocketLogger area="c" />
+			</div>
 		</div>
 	)
 }
