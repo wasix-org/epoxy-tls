@@ -2,7 +2,7 @@ import epoxyInit, { EpoxyClient, EpoxyClientOptions, info as epoxyInfo } from "@
 import { settings } from "./store";
 import { WebSocketStream } from "./loggingws";
 
-export let epoxyVersion = epoxyInfo.version;
+export let epoxyVersion = epoxyInfo.version + epoxyInfo.commit + epoxyInfo.release;
 
 const EPOXY_PATH = "/epoxy/epoxy.wasm";
 
