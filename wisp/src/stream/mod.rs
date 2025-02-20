@@ -166,6 +166,14 @@ impl<W: TransportWrite> MuxStreamWrite<W> {
 		}
 	}
 
+	pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream<W> {
+		MuxProtocolExtensionStream {
+			info: self.info.clone(),
+			tx: self.write.clone(),
+			inner: self.inner.sender().clone(),
+		}
+	}
+
 	/// Close the stream. You will no longer be able to write or read after this has been called.
 	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
 		if self.inner.is_disconnected() {
@@ -305,6 +313,10 @@ impl<W: TransportWrite> MuxStream<W> {
 
 	pub fn get_close_handle(&self) -> MuxStreamCloser<W> {
 		self.write.get_close_handle()
+	}
+
+	pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream<W> {
+		self.write.get_protocol_extension_stream()
 	}
 
 	/// Close the stream. You will no longer be able to write or read after this has been called.
