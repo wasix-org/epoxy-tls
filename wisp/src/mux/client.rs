@@ -68,15 +68,13 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 			closure,
 		}) = v2
 		{
+			// user asked for v2 client
 			let packet =
 				MaybeInfoPacket::decode(rx.next_erroring().await?, &mut builders, Role::Client)?;
 
 			match packet {
 				MaybeInfoPacket::Info(info) => {
 					// v2 server
-					let buffer_size =
-						validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
-
 					(closure)(&mut builders).await?;
 					send_info_packet(tx, &mut builders, Role::Client).await?;
 
@@ -84,6 +82,9 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 						get_supported_extensions(info.extensions, &mut builders);
 
 					handle_handshake(rx, tx, &mut supported_extensions).await?;
+
+					let buffer_size =
+						validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
 
 					Ok(WispHandshakeResult {
 						kind: WispHandshakeResultKind::V2 {

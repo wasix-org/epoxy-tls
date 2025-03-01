@@ -82,11 +82,6 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 		}) = v2
 		{
 			send_info_packet(tx, &mut builders, Role::Server).await?;
-			tx.lock().await;
-			tx.get()
-				.send(Packet::new_continue(0, self.buffer_size).encode())
-				.await?;
-			tx.unlock();
 
 			(closure)(&mut builders).await?;
 
@@ -99,6 +94,12 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 						get_supported_extensions(info.extensions, &mut builders);
 
 					handle_handshake(rx, tx, &mut supported_extensions).await?;
+
+					tx.lock().await;
+					tx.get()
+						.send(Packet::new_continue(0, self.buffer_size).encode())
+						.await?;
+					tx.unlock();
 
 					// v2 client
 					Ok(WispHandshakeResult {

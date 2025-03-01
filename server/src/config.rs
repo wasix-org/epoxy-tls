@@ -24,7 +24,7 @@ pub const VERSION_STRING: &str = concat!(
 	env!("VERGEN_GIT_SHA"),
 	", dirty ",
 	env!("VERGEN_GIT_DIRTY"),
-	" compiled with rustc ",
+	", compiled with rustc ",
 	env!("VERGEN_RUSTC_SEMVER"),
 	" on ",
 	env!("VERGEN_RUSTC_HOST_TRIPLE")

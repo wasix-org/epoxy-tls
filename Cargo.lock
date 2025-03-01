@@ -3373,7 +3373,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-mux"
-version = "7.0.0"
+version = "6.0.0"
 dependencies = [
  "async-trait",
  "bitflags",

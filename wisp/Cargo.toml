@@ -1,6 +1,6 @@
 [package]
 name = "wisp-mux"
-version = "7.0.0"
+version = "6.0.0"
 license = "MIT"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"

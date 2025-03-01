@@ -67,7 +67,6 @@ impl ProtocolExtension for PasswordProtocolExtension {
 			Self::ClientAfterServerInfo { user, password } => {
 				let mut out = BytesMut::with_capacity(1 + 2 + user.len() + password.len());
 				out.put_u8(user.len().try_into().unwrap());
-				out.put_u16_le(password.len().try_into().unwrap());
 				out.extend_from_slice(user.as_bytes());
 				out.extend_from_slice(password.as_bytes());
 				out.freeze()
@@ -184,11 +183,9 @@ impl ProtocolExtensionBuilder for PasswordProtocolExtensionBuilder {
 		match self {
 			Self::ServerBeforeClientInfo { users, required } => {
 				let user_len = bytes.get_u8();
-				let password_len = bytes.get_u16_le();
 
 				let user = std::str::from_utf8(&bytes.split_to(user_len as usize))?.to_string();
-				let password =
-					std::str::from_utf8(&bytes.split_to(password_len as usize))?.to_string();
+				let password = std::str::from_utf8(&bytes)?.to_string();
 
 				let valid = users.get(&user).is_some_and(|x| *x == password);
 
