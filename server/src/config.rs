@@ -70,6 +70,17 @@ pub enum RuntimeFlavor {
 	/// Alternate multi-threaded tokio runtime.
 	#[cfg(tokio_unstable)]
 	MultiThreadAlt,
+	/// Thread-per-core tokio runtimes.
+	ThreadPerCore,
+}
+
+impl RuntimeFlavor {
+	pub fn is_thread_per_core(&self) -> bool {
+		match self {
+			Self::ThreadPerCore => true,
+			_ => false,
+		}
+	}
 }
 
 pub type BindAddr = (SocketType, String);

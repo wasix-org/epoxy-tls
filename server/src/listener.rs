@@ -1,9 +1,5 @@
 use std::{
-	io::{BufReader, Cursor},
-	os::fd::AsFd,
-	path::PathBuf,
-	pin::Pin,
-	sync::Arc,
+	io::{BufReader, Cursor}, net::SocketAddr, os::fd::AsFd, path::PathBuf, pin::Pin, str::FromStr, sync::Arc
 };
 
 use anyhow::Context;
@@ -11,7 +7,7 @@ use rustls_pemfile::{certs, private_key};
 use tokio::{
 	fs::{remove_file, try_exists, File},
 	io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
-	net::{tcp, unix, TcpListener, TcpStream, UnixListener, UnixStream},
+	net::{tcp, unix, TcpListener, TcpSocket, TcpStream, UnixListener, UnixStream},
 };
 use tokio_rustls::{rustls, server::TlsStream, TlsAcceptor};
 use uuid::Uuid;
@@ -286,9 +282,20 @@ pub enum ServerListener {
 
 impl ServerListener {
 	async fn bind_tcp(bind: &BindAddr) -> anyhow::Result<TcpListener> {
-		TcpListener::bind(&bind.1)
-			.await
-			.with_context(|| format!("failed to bind to tcp address `{}`", bind.1))
+		if CONFIG.server.runtime.is_thread_per_core() {
+			let listener = TcpSocket::new_v4()?;
+			listener
+				.set_reuseport(true)
+				.context("failed to set SO_REUSEPORT")?;
+			listener
+				.bind(SocketAddr::from_str(&bind.1)?)
+				.with_context(|| format!("failed to bind to tcp address `{}`", bind.1))?;
+			Ok(listener.listen(64)?)
+		} else {
+			TcpListener::bind(&bind.1)
+				.await
+				.with_context(|| format!("failed to bind to tcp address `{}`", bind.1))
+		}
 	}
 
 	async fn bind_unix(bind: &BindAddr) -> anyhow::Result<UnixListener> {
