@@ -27,25 +27,35 @@ pub async fn handle_wsproxy(
 ) -> anyhow::Result<()> {
 	if udp && !CONFIG.stream.allow_wsproxy_udp {
 		let _ = ws
-			.close(CloseCode::POLICY_VIOLATION.into(), "udp is blocked")
+			.close(CloseCode::POLICY_VIOLATION, "udp is blocked")
 			.await;
 		return Ok(());
 	}
 
-	let vec: Vec<&str> = path.split('/').last().unwrap().split(':').collect();
-	let Ok(port) = FromStr::from_str(vec[1]) else {
-		let _ = ws
-			.close(CloseCode::POLICY_VIOLATION.into(), "invalid port")
-			.await;
+	let Some(vec) = path
+		.split('/')
+		.next_back()
+		.map(|x| x.split(':').collect::<Vec<_>>())
+	else {
+		let _ = ws.close(CloseCode::POLICY_VIOLATION, "invalid path").await;
 		return Ok(());
 	};
+	let Some(host) = vec.first().map(ToString::to_string) else {
+		let _ = ws.close(CloseCode::POLICY_VIOLATION, "invalid host").await;
+		return Ok(());
+	};
+	let Some(port) = vec.get(1).and_then(|x| FromStr::from_str(x).ok()) else {
+		let _ = ws.close(CloseCode::POLICY_VIOLATION, "invalid port").await;
+		return Ok(());
+	};
+
 	let connect = ConnectPacket {
 		stream_type: if udp {
 			StreamType::Udp
 		} else {
 			StreamType::Tcp
 		},
-		host: vec[0].to_string(),
+		host,
 		port,
 	};
 
@@ -53,10 +63,7 @@ pub async fn handle_wsproxy(
 
 	let Ok(resolved) = ClientStream::resolve(connect).await else {
 		let _ = ws
-			.close(
-				CloseCode::INTERNAL_SERVER_ERROR.into(),
-				"failed to resolve host",
-			)
+			.close(CloseCode::INTERNAL_SERVER_ERROR, "failed to resolve host")
 			.await;
 		return Ok(());
 	};
@@ -66,7 +73,7 @@ pub async fn handle_wsproxy(
 			let Ok(stream) = ClientStream::connect(connect).await else {
 				let _ = ws
 					.close(
-						CloseCode::INTERNAL_SERVER_ERROR.into(),
+						CloseCode::INTERNAL_SERVER_ERROR,
 						"failed to connect to host",
 					)
 					.await;
@@ -79,7 +86,7 @@ pub async fn handle_wsproxy(
 			let Ok(stream) = route_wispnet(server, connect).await else {
 				let _ = ws
 					.close(
-						CloseCode::INTERNAL_SERVER_ERROR.into(),
+						CloseCode::INTERNAL_SERVER_ERROR,
 						"failed to connect to host",
 					)
 					.await;
@@ -90,7 +97,7 @@ pub async fn handle_wsproxy(
 		ResolvedPacket::NoResolvedAddrs => {
 			let _ = ws
 				.close(
-					CloseCode::INTERNAL_SERVER_ERROR.into(),
+					CloseCode::INTERNAL_SERVER_ERROR,
 					"host did not resolve to any addrs",
 				)
 				.await;
@@ -98,14 +105,14 @@ pub async fn handle_wsproxy(
 		}
 		ResolvedPacket::Blocked => {
 			let _ = ws
-				.close(CloseCode::POLICY_VIOLATION.into(), "host is blocked")
+				.close(CloseCode::POLICY_VIOLATION, "host is blocked")
 				.await;
 			return Ok(());
 		}
 		ResolvedPacket::Invalid => {
 			let _ = ws
 				.close(
-					CloseCode::POLICY_VIOLATION.into(),
+					CloseCode::POLICY_VIOLATION,
 					"invalid host/port/type combination",
 				)
 				.await;
@@ -158,12 +165,10 @@ pub async fn handle_wsproxy(
 			.await;
 			match ret {
 				Ok(()) => {
-					let _ = ws.close(CloseCode::NORMAL_CLOSURE.into(), "").await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, "").await;
 				}
 				Err(x) => {
-					let _ = ws
-						.close(CloseCode::NORMAL_CLOSURE.into(), &x.to_string())
-						.await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, &x.to_string()).await;
 				}
 			}
 		}
@@ -190,12 +195,10 @@ pub async fn handle_wsproxy(
 			.await;
 			match ret {
 				Ok(()) => {
-					let _ = ws.close(CloseCode::NORMAL_CLOSURE.into(), "").await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, "").await;
 				}
 				Err(x) => {
-					let _ = ws
-						.close(CloseCode::NORMAL_CLOSURE.into(), &x.to_string())
-						.await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, &x.to_string()).await;
 				}
 			}
 		}
@@ -247,19 +250,17 @@ pub async fn handle_wsproxy(
 
 			match ret {
 				Ok(()) => {
-					let _ = ws.close(CloseCode::NORMAL_CLOSURE.into(), "").await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, "").await;
 				}
 				Err(x) => {
-					let _ = ws
-						.close(CloseCode::NORMAL_CLOSURE.into(), &x.to_string())
-						.await;
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, &x.to_string()).await;
 				}
 			}
 		}
 		ClientStream::NoResolvedAddrs => {
 			let _ = ws
 				.close(
-					CloseCode::INTERNAL_SERVER_ERROR.into(),
+					CloseCode::INTERNAL_SERVER_ERROR,
 					"host did not resolve to any addrs",
 				)
 				.await;
@@ -267,12 +268,12 @@ pub async fn handle_wsproxy(
 		}
 		ClientStream::Blocked => {
 			let _ = ws
-				.close(CloseCode::POLICY_VIOLATION.into(), "host is blocked")
+				.close(CloseCode::POLICY_VIOLATION, "host is blocked")
 				.await;
 		}
 		ClientStream::Invalid => {
 			let _ = ws
-				.close(CloseCode::POLICY_VIOLATION.into(), "host is invalid")
+				.close(CloseCode::POLICY_VIOLATION, "host is invalid")
 				.await;
 		}
 	}
