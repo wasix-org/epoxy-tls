@@ -1,48 +1,24 @@
 {
 	"name": "@mercuryworkshop/epoxy-tls",
-	"version": "2.1.17-1",
-	"description": "A wasm library for using raw encrypted tls/ssl/tcp/udp/https/websocket streams on the browser",
-	"scripts": {
-		"build": "./build.sh"
-	},
+	"version": "3.0.0.0",
+	"description": "An end-to-end encrypted HTTP and WebSocket client running TLS in WebAssembly",
+	"license": "MIT",
+	"type": "module",
 	"keywords": [
 		"wasm",
 		"ssl",
 		"tls",
-		"rust",
-		"proxy",
-		"http"
+		"http",
+		"https",
+		"websocket"
 	],
-	"author": "MercuryWorkshop",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/MercuryWorkshop/epoxy-tls.git"
-	},
-	"license": "AGPL-3.0-only",
-	"exports": {
-		".": {
-			"import": "./full/epoxy-bundled.js",
-			"types": "./full/epoxy-bundled.d.ts"
-		},
-		"./epoxy": {
-			"import": "./full/epoxy.js",
-			"types": "./full/epoxy.d.ts"
-		},
-		"./epoxy-bundled": {
-			"import": "./full/epoxy-bundled.js",
-			"types": "./full/epoxy-bundled.d.ts"
-		},
-		"./minimal-epoxy": {
-			"import": "./minimal/epoxy.js",
-			"types": "./minimal/epoxy.d.ts"
-		},
-		"./minimal-epoxy-bundled": {
-			"import": "./minimal/epoxy-bundled.js",
-			"types": "./minimal/epoxy-bundled.d.ts"
-		}
-	},
-	"browser": "./full/epoxy-bundled.js",
-	"module": "./full/epoxy-bundled.js",
-	"main": "./full/epoxy-bundled.js",
-	"types": "./full/epoxy-bundled.d.ts"
+	"devDependencies": {
+		"@rollup/plugin-node-resolve": "^16.0.1",
+		"@rollup/plugin-terser": "^0.4.4",
+		"prettier": "^3.5.3",
+		"rollup": "^4.41.0",
+		"rollup-plugin-dts": "^6.2.1",
+		"tslib": "^2.8.1",
+		"typescript": "^5.8.3"
+	}
 }

@@ -1,7 +1,7 @@
 [package]
 name = "epoxy-client"
-version = "2.1.17"
-edition = "2021"
+version = "3.0.0"
+edition = "2024"
 
 [lints]
 workspace = true
@@ -10,36 +10,22 @@ workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-async-compression = { version = "0.4.12", features = ["futures-io", "gzip", "brotli"], optional = true }
-bytes = "1.7.1"
-cfg-if = "1.0.0"
-event-listener = "5.3.1"
-fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
-flume = "0.11.0"
-futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
-futures-util = { version = "0.3.30", features = ["sink"] }
-http = "1.1.0"
-http-body = "1.0.1"
-http-body-util = "0.1.2"
-hyper = "1.4.1"
-hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", rev = "07117dd90174688341c27df2fdeb023c71015e4a", features = ["client-legacy", "http1"] }
-js-sys = "0.3.70"
-pin-project-lite = "0.2.14"
-rustls-pemfile = { version = "2.1.3", optional = true }
-rustls-webpki = { version = "0.102.7", optional = true }
-send_wrapper = { version = "0.6.0", features = ["futures"] }
-thiserror = "2.0.3"
-tokio = "1.39.3"
+hyper = { version = "1.6.0", features = ["client", "http1", "http2"] }
+hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", rev = "c582f05daa6529a75f6838a26ebf29ff09f62921", features = ["client-legacy", "http1", "http2"] }
+futures = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
+tower = { version = "0.5.2", features = ["util"] }
+thiserror = "2.0.12"
+wisp-mux = { version = "6.0.0", path = "../wisp" }
+bytes = "1.10.1"
+pin-project = "1.1.10"
+wasm-bindgen-futures = "0.4.50"
+web-sys = "0.3.77"
+js-sys = "0.3.77"
 wasm-bindgen = "0.2.100"
-wasm-bindgen-futures = "0.4.43"
-wasm-streams = "0.4.0"
-web-sys = { version = "0.3.70", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "Url", "WebSocket"] }
-webpki-roots = "0.26.3"
-wisp-mux = { version = "*", path = "../wisp", features = ["wasm"], default-features = false }
-
-[dependencies.getrandom]
-version = "*"
-features = ["js"]
+wasm-streams = "0.4.2"
+webpki-roots = "1.0.0"
+futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
+http-body-util = "0.1.3"
 
 [dependencies.ring]
 version = "*"
@@ -48,16 +34,4 @@ features = ["wasm32_unknown_unknown_js"]
 [dependencies.rustls-pki-types]
 version = "*"
 features = ["web"]
-
-[dependencies.parking_lot_core]
-version = "*"
-features = ["nightly"]
-
-[dependencies.instant]
-version = "*"
-features = ["wasm-bindgen"]
-
-[features]
-default = ["full"]
-full = ["dep:fastwebsockets", "dep:async-compression", "dep:rustls-webpki", "dep:rustls-pemfile", "hyper-util-wasm/http2"]
 

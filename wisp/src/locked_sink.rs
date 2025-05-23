@@ -120,6 +120,7 @@ impl<S: Sink<I>, I> SinkState<S, I> {
 		unsafe { &mut *self.sink.get() }
 	}
 
+	#[expect(clippy::mut_from_ref)]
 	/// caller must make sure they are the ones locking the sink
 	pub unsafe fn get(&self) -> Pin<&mut S> {
 		// SAFETY: we are locked
@@ -244,6 +245,7 @@ impl<S: Sink<I>, I> LockedSink<S, I> {
 		}
 	}
 
+	#[expect(clippy::mut_from_ref)]
 	pub fn get(&self) -> Pin<&mut S> {
 		debug_assert!(self.locked);
 		// SAFETY: we are locked
