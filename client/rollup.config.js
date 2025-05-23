@@ -19,7 +19,10 @@ async function run(cmd, args, env = {}) {
 	});
 
 	const start = performance.now();
-	const spawned = spawn(cmd, args, { env: Object.assign({}, process.env, env), stdio: "inherit" });
+	const spawned = spawn(cmd, args, {
+		env: Object.assign({}, process.env, env),
+		stdio: "inherit",
+	});
 	spawned.on("error", (x) => rej(x));
 	spawned.on("exit", (x) => {
 		const time = performance.now() - start;
@@ -52,8 +55,7 @@ async function compileRust(folder, args) {
 			...args,
 		],
 		{
-			CFLAGS: "-O3",
-			RUSTFLAGS: "-Zlocation-detail=none -C target-cpu=mvp",
+			RUSTFLAGS: "-Zlocation-detail=none -Zfmt-debug=none -C target-cpu=mvp",
 		}
 	);
 
@@ -78,6 +80,9 @@ async function compileRust(folder, args) {
 		"--signext-lowering",
 		"--converge",
 		"-Oz",
+		"--flatten",
+		"--rereloop",
+		"-Oz",
 	]);
 }
 
@@ -89,12 +94,10 @@ function rust(folderName, args = []) {
 			await compileRust(folder, args);
 		},
 		resolveId: (source) => {
-			if (source === "epoxy/wbg")
-				return path.join(folder, "epoxy_client.js");
-			if (source === "epoxy/wasm")
-				return path.join(folder, "epoxy.wasm");
+			if (source === "epoxy/wbg") return path.join(folder, "epoxy_client.js");
+			if (source === "epoxy/wasm") return path.join(folder, "epoxy.wasm");
 			return null;
-		}
+		},
 	};
 }
 
@@ -104,13 +107,13 @@ const rustFallback = {
 		if (source.startsWith("epoxy/"))
 			throw new Error(`${source} should not be leaking`);
 		return null;
-	}
+	},
 };
 
 const common = (include) => [
 	nodeResolve(),
 	wasm({
-		maxFileSize: 2 * 1024 * 1024
+		maxFileSize: 2 * 1024 * 1024,
 	}),
 	typescript({
 		include: include + "/**/*",

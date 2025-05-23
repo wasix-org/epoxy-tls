@@ -10,10 +10,10 @@ workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-hyper = { version = "1.6.0", features = ["client", "http1", "http2"] }
-hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", rev = "c582f05daa6529a75f6838a26ebf29ff09f62921", features = ["client-legacy", "http1", "http2"] }
+hyper = { version = "1.6.0", features = ["client", "http1"] }
+hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", rev = "c582f05daa6529a75f6838a26ebf29ff09f62921", features = ["client-legacy", "http1"] }
 futures = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
-tower = { version = "0.5.2", features = ["util"] }
+tower = { version = "0.4.13", features = ["util"] }
 thiserror = "2.0.12"
 wisp-mux = { version = "6.0.0", path = "../wisp" }
 bytes = "1.10.1"

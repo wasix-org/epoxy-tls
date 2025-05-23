@@ -19,7 +19,6 @@ pub type HyperClient = Client<StreamProviderService, HyperClientBody>;
 
 pub fn build_hyper_client(provider: StreamProviderService) -> HyperClient {
 	Client::builder(WasmExecutor)
-		.http2_max_concurrent_reset_streams(10)
 		.http09_responses(true)
 		.build(provider)
 }
