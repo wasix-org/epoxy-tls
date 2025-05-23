@@ -1,5 +1,7 @@
 // @ts-expect-error
-import { Client, init } from "epoxy/wbg";
+import wbgInit, { Client } from "epoxy/wbg";
+// @ts-expect-error
+import wasm from "epoxy/wasm";
 
 export class EpoxyClient {
 	// @internal
@@ -12,6 +14,10 @@ export class EpoxyClient {
 	}
 
 	async fetch() {
-		await this.client.fetch("https://google.com");
+		await this.client.request("https://google.com");
 	}
+}
+
+export async function init() {
+	await wbgInit({ module_or_path: await wasm() });
 }

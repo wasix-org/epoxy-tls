@@ -5,3 +5,4 @@
 /client/node_modules
 /client/pnpm-lock.yaml
 /client/build/
+/client/dist/

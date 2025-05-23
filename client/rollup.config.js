@@ -2,12 +2,13 @@ import { defineConfig } from "rollup";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import process from "node:process";
 
 import terser from "@rollup/plugin-terser";
 import typescript from "@rollup/plugin-typescript";
 import dts from "rollup-plugin-dts";
 import nodeResolve from "@rollup/plugin-node-resolve";
-import process from "node:process";
+import wasm from "@rollup/plugin-wasm";
 
 async function run(cmd, args, env = {}) {
 	console.log([cmd, ...args].join(" "));
@@ -77,11 +78,6 @@ async function compileRust(folder, args) {
 		"--signext-lowering",
 		"--converge",
 		"-Oz",
-		"--flatten",
-		"--rereloop",
-		"-Oz",
-		"-O4",
-		"-Oz",
 	]);
 }
 
@@ -95,6 +91,8 @@ function rust(folderName, args = []) {
 		resolveId: (source) => {
 			if (source === "epoxy/wbg")
 				return path.join(folder, "epoxy_client.js");
+			if (source === "epoxy/wasm")
+				return path.join(folder, "epoxy.wasm");
 			return null;
 		}
 	};
@@ -103,14 +101,17 @@ function rust(folderName, args = []) {
 const rustFallback = {
 	name: "rust-fallback",
 	resolveId: (source) => {
-		if (source === "epoxy/wbg")
-			throw new Error("epoxy/wbg should not be leaking");
+		if (source.startsWith("epoxy/"))
+			throw new Error(`${source} should not be leaking`);
 		return null;
 	}
 };
 
 const common = (include) => [
 	nodeResolve(),
+	wasm({
+		maxFileSize: 2 * 1024 * 1024
+	}),
 	typescript({
 		include: include + "/**/*",
 		filterRoot: process.cwd(),
