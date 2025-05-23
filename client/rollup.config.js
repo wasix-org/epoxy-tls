@@ -55,6 +55,7 @@ async function compileRust(folder, args) {
 			...args,
 		],
 		{
+			CFLAGS: "-O3",
 			RUSTFLAGS: "-Zlocation-detail=none -Zfmt-debug=none -C target-cpu=mvp",
 		}
 	);
