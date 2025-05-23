@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, TryStreamExt};
 use js_sys::{Array, Function, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -7,7 +7,8 @@ use wasm_streams::{ReadableStream, WritableStream};
 use wisp_mux::WispError;
 
 use crate::{
-	EpoxyError, EpoxyErrorExt, EpoxyJsErrorExt, send_wrapper::SendWrapper, sink_map::SinkExtMap,
+	EpoxyError, EpoxyJsErrorExt, console_log, jsval_debug, send_wrapper::SendWrapper,
+	sink_map::SinkExtMap,
 };
 
 use super::{
@@ -55,11 +56,14 @@ impl ProviderService<String> for JsProvider {
 						.map_err(|x| x.0)
 						.js_error()?
 						.map(|x| {
+							console_log!("read");
 							Ok(
-								x.map_err(|x| WispError::WsImplError(format!("{x:?}").into()))?
+								x.map_err(|x| WispError::WsImplError(jsval_debug(x).into()))?
 									.dyn_into::<Uint8Array>()
-									.map_err(|_| {
-										WispError::WsImplError(Box::new(EpoxyError::InvalidJsValue))
+									.map_err(|x| {
+										WispError::WsImplError(Box::new(
+											EpoxyError::InvalidJsValue(jsval_debug(x)),
+										))
 									})?
 									.to_vec()
 									.into_iter()
@@ -72,7 +76,10 @@ impl ProviderService<String> for JsProvider {
 						.try_into_sink()
 						.map_err(|x| x.0)
 						.js_error()?
-						.map(|x: Bytes| Ok(Uint8Array::from(&x[..]).into()))
+						.map(|x: Bytes| {
+							console_log!("write");
+							Ok(Uint8Array::from(&x[..]).into())
+						})
 						.sink_map_err(|x| WispError::WsImplError(format!("{x:?}").into())),
 				)),
 			})
@@ -95,7 +102,18 @@ impl ProviderService<ProviderServiceReq> for JsProvider {
 			let (read, write) = Self::map_result(ret.js_error()?).await?;
 			Ok(ProviderUnencryptedStream {
 				read: Box::new(SendWrapper(
-					read.try_into_async_read().map_err(|x| x.0).js_error()?,
+					read.try_into_stream()
+						.map_err(|x| x.0)
+						.js_error()?
+						.map(|x| {
+							Ok(x.js_error()
+								.map_err(std::io::Error::other)?
+								.dyn_into::<Uint8Array>()
+								.js_invalid()
+								.map_err(std::io::Error::other)?
+								.to_vec())
+						})
+						.into_async_read(),
 				)),
 				write: Box::new(SendWrapper(
 					write.try_into_async_write().map_err(|x| x.0).js_error()?,

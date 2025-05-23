@@ -173,7 +173,7 @@ impl StreamProvider {
 		http: bool,
 	) -> Result<ProviderEncryptedStream, EpoxyError> {
 		let unencrypted = self.get_stream(host.clone(), port).await?;
-		let connector = TlsConnector::from(if http {
+		let connector = TlsConnector::from(if http && cfg!(feature = "full") {
 			self.h2_config.clone()
 		} else {
 			self.client_config.clone()

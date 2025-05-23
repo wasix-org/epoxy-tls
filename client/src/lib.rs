@@ -13,6 +13,15 @@ mod log;
 mod send_wrapper;
 mod sink_map;
 
+/*
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+fn main() {
+	std::panic::set_hook(Box::new(|info| {
+		console_log!("{}", info);
+	}));
+}
+*/
+
 #[derive(thiserror::Error, Debug)]
 pub enum EpoxyError {
 	#[error("Wisp: {0}")]
@@ -23,6 +32,8 @@ pub enum EpoxyError {
 	Rustls(#[from] rustls::Error),
 	#[error("HTTP: {0}")]
 	HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
+	#[error("HTTP: {0}")]
+	Hyper(#[from] hyper::Error),
 	#[error("HTTP: {0}")]
 	Http(#[from] hyper::http::Error),
 
@@ -36,8 +47,8 @@ pub enum EpoxyError {
 	#[error("No URL port")]
 	NoUrlPort,
 
-	#[error("JS: invalid value")]
-	InvalidJsValue,
+	#[error("JS: invalid value: {0}")]
+	InvalidJsValue(String),
 
 	#[error("JsError({0})")]
 	JsError(String),
@@ -69,27 +80,29 @@ impl JsValueInner {
 	}
 }
 
+pub fn jsval_debug(val: impl Into<JsValue>) -> String {
+	let inner = unsafe { std::mem::transmute::<JsValue, JsValueInner>(val.into()) };
+	inner.as_debug_string()
+}
+
 trait EpoxyJsErrorExt<T> {
+	fn js_invalid(self) -> Result<T, EpoxyError>;
 	fn js_error(self) -> Result<T, EpoxyError>;
 }
 impl<T, E: Into<JsValue>> EpoxyJsErrorExt<T> for Result<T, E> {
 	fn js_error(self) -> Result<T, EpoxyError> {
-		self.map_err(|x| {
-			let inner = unsafe { std::mem::transmute::<JsValue, JsValueInner>(x.into()) };
-			EpoxyError::JsError(inner.as_debug_string())
-		})
+		self.map_err(|x| EpoxyError::JsError(jsval_debug(x)))
+	}
+
+	fn js_invalid(self) -> Result<T, EpoxyError> {
+		self.map_err(|x| EpoxyError::InvalidJsValue(jsval_debug(x)))
 	}
 }
 
 trait EpoxyErrorExt<T> {
-	fn js_invalid(self) -> Result<T, EpoxyError>;
 	fn invalid_dns_name(self, name: String) -> Result<T, EpoxyError>;
 }
 impl<T, E: std::fmt::Debug> EpoxyErrorExt<T> for Result<T, E> {
-	fn js_invalid(self) -> Result<T, EpoxyError> {
-		self.map_err(|_| EpoxyError::InvalidJsValue)
-	}
-
 	fn invalid_dns_name(self, name: String) -> Result<T, EpoxyError> {
 		self.map_err(|_| EpoxyError::InvalidDnsName(name))
 	}

@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, body::Incoming};
 use js_sys::Function;
 use tower::{Service, ServiceExt};
@@ -53,7 +53,9 @@ impl Client {
 
 		let response = client.call(request).await?;
 
-		console_log!("resp {:?}", response);
+		let body = response.into_body().collect().await?;
+
+		console_log!("resp {}", str::from_utf8(&body.to_bytes()).unwrap());
 
 		Ok(())
 	}

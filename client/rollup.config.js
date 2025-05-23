@@ -10,6 +10,8 @@ import dts from "rollup-plugin-dts";
 import nodeResolve from "@rollup/plugin-node-resolve";
 import wasm from "@rollup/plugin-wasm";
 
+let DEBUG = false;
+
 async function run(cmd, args, env = {}) {
 	console.log(Object.entries(env).map(([k, v]) => `${k}="${v}"`).join(" ") + " " + [cmd, ...args].join(" "));
 	let res, rej;
@@ -79,6 +81,7 @@ async function compileRust(folder, args) {
 		"-o",
 		path.join(folder, "epoxy.wasm"),
 		"--signext-lowering",
+		...(DEBUG ? ["-g"] : []),
 		"--converge",
 		"-Oz",
 		"--flatten",
@@ -170,6 +173,7 @@ const cfg = (inputDir, inputFile, output, defs, plugins) => {
 };
 
 export default (args) => {
+	if (args["config-debug"]) DEBUG = true;
 	return defineConfig([
 		...cfg("js", "index.ts", "dist/epoxy.js", true, [rust("full")]),
 	]);
