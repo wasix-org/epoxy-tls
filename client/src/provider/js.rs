@@ -1,9 +1,6 @@
-use std::task::{Context, Poll};
-
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use js_sys::{Array, Function, Promise, Uint8Array};
-use tower::Service;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use wasm_streams::{ReadableStream, WritableStream};
@@ -11,13 +8,22 @@ use wisp_mux::WispError;
 
 use crate::{EpoxyError, EpoxyErrorExt, send_wrapper::SendWrapper, sink_map::SinkExtMap};
 
-use super::{service::ProviderService, wisp::WispProviderStream, ProviderServiceReq, ProviderUnencryptedStream};
+use super::{
+	ProviderServiceReq, ProviderUnencryptedStream, service::ProviderService,
+	wisp::WispProviderStream,
+};
 
 pub struct JsProvider {
-	provider: Function,
+	provider: SendWrapper<Function>,
 }
 
 impl JsProvider {
+	pub fn new(func: Function) -> Self {
+		Self {
+			provider: SendWrapper(func),
+		}
+	}
+
 	async fn map_result(val: JsValue) -> Result<(ReadableStream, WritableStream), EpoxyError> {
 		let val = JsFuture::from(val.dyn_into::<Promise>().js_invalid()?)
 			.await
@@ -37,7 +43,7 @@ impl ProviderService<String> for JsProvider {
 	type Future = impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
 	fn call(&self, request: String) -> Self::Future {
-		let ret = self.provider.call1(&JsValue::NULL, &request.into());
+		let ret = self.provider.0.call1(&JsValue::NULL, &request.into());
 
 		SendWrapper(async move {
 			let (read, write) = Self::map_result(ret.js_error()?).await?;
@@ -72,18 +78,15 @@ impl ProviderService<String> for JsProvider {
 	}
 }
 
-impl Service<ProviderServiceReq> for JsProvider {
+impl ProviderService<ProviderServiceReq> for JsProvider {
 	type Response = ProviderUnencryptedStream;
 	type Error = EpoxyError;
 	type Future = impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
-	fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		Poll::Ready(Ok(()))
-	}
-
-	fn call(&mut self, request: ProviderServiceReq) -> Self::Future {
+	fn call(&self, request: ProviderServiceReq) -> Self::Future {
 		let ret = self
 			.provider
+			.0
 			.call2(&JsValue::NULL, &request.host.into(), &request.port.into());
 
 		SendWrapper(async move {

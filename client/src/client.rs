@@ -1,16 +1,60 @@
+use bytes::Bytes;
+use http_body_util::Full;
 use hyper::{Request, Response, body::Incoming};
-use tower::Service;
+use js_sys::Function;
+use tower::{Service, ServiceExt};
+use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::provider::http::{HyperClient, HyperClientBody};
+use crate::{
+	EpoxyError, console_log,
+	provider::{
+		StreamProvider,
+		http::{HyperClient, HyperClientBody, build_hyper_client},
+		js::JsProvider,
+		service::BoxProviderService,
+	},
+};
 
+#[wasm_bindgen]
 pub struct Client {
 	hyper: HyperClient,
 }
 
+#[wasm_bindgen]
 impl Client {
 	fn build_client(
 		&self,
-	) -> impl Service<Request<HyperClientBody>, Response = Response<Incoming>> {
+	) -> impl Service<
+		Request<HyperClientBody>,
+		Response = Response<Incoming>,
+		Error = hyper_util_wasm::client::legacy::Error,
+	> {
 		self.hyper.clone()
+	}
+
+	#[wasm_bindgen(constructor)]
+	pub fn new(func: Function) -> Result<Self, EpoxyError> {
+		let backend = BoxProviderService::new(JsProvider::new(func));
+
+		let provider = StreamProvider::new(backend)?.into_service();
+
+		Ok(Self {
+			hyper: build_hyper_client(provider),
+		})
+	}
+
+	pub async fn request(&self, url: String) -> Result<(), EpoxyError> {
+		let mut client = self.build_client();
+		client.ready().await?;
+
+		let request = Request::builder().uri(url);
+
+		let request = request.body(Full::new(Bytes::new()))?;
+
+		let response = client.call(request).await?;
+
+		console_log!("resp {:?}", response);
+
+		Ok(())
 	}
 }

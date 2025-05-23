@@ -35,3 +35,6 @@ features = ["wasm32_unknown_unknown_js"]
 version = "*"
 features = ["web"]
 
+[dependencies.instant]
+version = "*"
+features = ["wasm-bindgen"]

@@ -8,6 +8,7 @@ use pin_project::pin_project;
 
 #[pin_project]
 pub struct SendWrapper<T>(#[pin] pub T);
+unsafe impl<T> Sync for SendWrapper<T> {}
 unsafe impl<T> Send for SendWrapper<T> {}
 
 impl<T: Future> Future for SendWrapper<T> {

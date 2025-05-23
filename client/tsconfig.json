@@ -1,0 +1,13 @@
+{
+	"compilerOptions": {
+		"lib": ["ES2022"],
+		"target": "ES2022",
+		"declaration": true,
+		"declarationDir": "dist/types",
+		"rootDir": "js",
+		"moduleResolution": "bundler",
+		"stripInternal": true
+	},
+	"include": ["js"],
+	"exclude": ["dist"]
+}

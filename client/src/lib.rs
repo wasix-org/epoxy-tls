@@ -1,11 +1,13 @@
 #![feature(impl_trait_in_assoc_type)]
 
 use futures_rustls::rustls;
+use wasm_bindgen::{JsError, JsValue};
 use wisp_mux::WispError;
 
 mod client;
 mod provider;
 
+mod log;
 mod send_wrapper;
 mod sink_map;
 
@@ -17,6 +19,10 @@ pub enum EpoxyError {
 	IO(#[from] std::io::Error),
 	#[error("TLS: {0}")]
 	Rustls(#[from] rustls::Error),
+	#[error("HTTP: {0}")]
+	HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
+	#[error("HTTP: {0}")]
+	Http(#[from] hyper::http::Error),
 
 	#[error("Invalid DNS name: {0}")]
 	InvalidDnsName(String),
@@ -35,6 +41,12 @@ pub enum EpoxyError {
 	JsError(String),
 }
 
+impl From<EpoxyError> for JsValue {
+	fn from(value: EpoxyError) -> Self {
+		JsError::from(value).into()
+	}
+}
+
 trait EpoxyErrorExt<T> {
 	fn js_invalid(self) -> Result<T, EpoxyError>;
 	fn js_error(self) -> Result<T, EpoxyError>;
@@ -48,7 +60,7 @@ impl<T, E: std::fmt::Debug> EpoxyErrorExt<T> for Result<T, E> {
 	fn js_error(self) -> Result<T, EpoxyError> {
 		self.map_err(|x| EpoxyError::JsError(format!("{x:?}")))
 	}
-	
+
 	fn invalid_dns_name(self, name: String) -> Result<T, EpoxyError> {
 		self.map_err(|_| EpoxyError::InvalidDnsName(name))
 	}
