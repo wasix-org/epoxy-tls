@@ -11,6 +11,7 @@ import nodeResolve from "@rollup/plugin-node-resolve";
 import wasm from "@rollup/plugin-wasm";
 
 let DEBUG = false;
+let SIZE = false;
 
 async function run(cmd, args, env = {}) {
 	console.log(Object.entries(env).map(([k, v]) => `${k}="${v}"`).join(" ") + " " + [cmd, ...args].join(" "));
@@ -57,7 +58,7 @@ async function compileRust(folder, args) {
 			...args,
 		],
 		{
-			CFLAGS: "-O3",
+			...(SIZE ? {} : { CFLAGS: "-O3" }),
 			RUSTFLAGS: "-Zlocation-detail=none -Zfmt-debug=none -C target-cpu=mvp",
 		}
 	);
@@ -86,6 +87,9 @@ async function compileRust(folder, args) {
 		"-Oz",
 		"--flatten",
 		"--rereloop",
+		"-Oz",
+		"--vacuum",
+		"--dce",
 		"-Oz",
 	]);
 
@@ -174,6 +178,8 @@ const cfg = (inputDir, inputFile, output, defs, plugins) => {
 
 export default (args) => {
 	if (args["config-debug"]) DEBUG = true;
+	if (args["config-size"]) SIZE = true;
+
 	return defineConfig([
 		...cfg("js", "index.ts", "dist/epoxy.js", true, [rust("full")]),
 	]);
