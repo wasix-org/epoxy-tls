@@ -6,7 +6,9 @@ use wasm_bindgen_futures::JsFuture;
 use wasm_streams::{ReadableStream, WritableStream};
 use wisp_mux::WispError;
 
-use crate::{EpoxyError, EpoxyErrorExt, send_wrapper::SendWrapper, sink_map::SinkExtMap};
+use crate::{
+	EpoxyError, EpoxyErrorExt, EpoxyJsErrorExt, send_wrapper::SendWrapper, sink_map::SinkExtMap,
+};
 
 use super::{
 	ProviderServiceReq, ProviderUnencryptedStream, service::ProviderService,

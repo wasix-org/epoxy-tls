@@ -11,7 +11,7 @@ import nodeResolve from "@rollup/plugin-node-resolve";
 import wasm from "@rollup/plugin-wasm";
 
 async function run(cmd, args, env = {}) {
-	console.log([cmd, ...args].join(" "));
+	console.log(Object.entries(env).map(([k, v]) => `${k}="${v}"`).join(" ") + " " + [cmd, ...args].join(" "));
 	let res, rej;
 	const promise = new Promise((a, b) => {
 		res = a;
@@ -85,6 +85,10 @@ async function compileRust(folder, args) {
 		"--rereloop",
 		"-Oz",
 	]);
+
+	const stat = await fs.stat(path.join(folder, "epoxy.wasm"));
+	const size = stat.size / 1024;
+	console.log(`built rust in "${folder}" with size ${size.toFixed(2)}kb`);
 }
 
 function rust(folderName, args = []) {
