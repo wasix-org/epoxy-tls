@@ -113,6 +113,20 @@ lazy_static! {
 	};
 }
 
+#[cfg(feature = "uring")]
+lazy_static! {
+	pub static ref URING: async_uring::rt::UringRuntime = {
+		let (rt, fut) =
+			async_uring::rt::UringRuntime::builder::<async_uring::tokio::TokioAsyncFd>()
+				.build()
+				.context("failed to build io-uring runtime")
+				.unwrap();
+		tokio::spawn(async move { warn!("io-uring runtime exited: {:?}", fut.await) });
+		info!("started io-uring runtime future");
+		rt
+	};
+}
+
 #[doc(hidden)]
 #[global_allocator]
 static JEMALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -135,6 +149,7 @@ fn main() -> Result<()> {
 		#[cfg(tokio_unstable)]
 		RuntimeFlavor::MultiThreadAlt => runtime::Builder::new_multi_thread_alt(),
 
+		#[cfg(not(feature = "uring"))]
 		// threadpercore has completely different runtime setup
 		RuntimeFlavor::ThreadPerCore => return threadpercore_main(),
 	};
@@ -163,9 +178,12 @@ async fn async_init() {
 	trace!("CLI: {:#?}", &*CLI);
 	trace!("CONFIG: {:#?}", &*CONFIG);
 	trace!("RESOLVER: {:?}", &*RESOLVER);
+	#[cfg(feature = "uring")]
+	let _ = &*URING;
 }
 
 #[doc(hidden)]
+#[cfg_attr(feature = "uring", expect(dead_code))]
 fn threadpercore_main() -> Result<()> {
 	let rt = runtime::Builder::new_current_thread()
 		.enable_all()

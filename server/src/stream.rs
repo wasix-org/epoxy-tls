@@ -12,7 +12,7 @@ use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::debug;
 use regex::RegexSet;
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::UdpSocket;
 use tokio_websockets::{CloseCode, Message, Payload, WebSocketStream};
 use wisp_mux::{
 	packet::{ConnectPacket, StreamType},
@@ -42,7 +42,10 @@ fn blocked_set(stream_type: StreamType) -> &'static RegexSet {
 }
 
 pub enum ClientStream {
-	Tcp(TcpStream),
+	#[cfg(not(feature = "uring"))]
+	Tcp(tokio::net::TcpStream),
+	#[cfg(feature = "uring")]
+	Tcp(async_uring::net::tcp::TcpStream),
 	Udp(UdpSocket),
 	#[cfg(feature = "twisp")]
 	Pty(tokio::process::Child, pty_process::Pty),
@@ -227,7 +230,7 @@ impl ClientStream {
 			StreamType::Tcp => {
 				let ipaddr =
 					IpAddr::from_str(&packet.host).context("failed to parse hostname as ipaddr")?;
-				let stream = TcpStream::connect(SocketAddr::new(ipaddr, packet.port))
+				let stream = tokio::net::TcpStream::connect(SocketAddr::new(ipaddr, packet.port))
 					.await
 					.with_context(|| format!("failed to connect to host {}", packet.host))?;
 
@@ -237,7 +240,19 @@ impl ClientStream {
 						.context("failed to set tcp nodelay")?;
 				}
 
-				Ok(ClientStream::Tcp(stream))
+				#[cfg(not(feature = "uring"))]
+				return Ok(ClientStream::Tcp(stream));
+				#[cfg(feature = "uring")]
+				return Ok(ClientStream::Tcp(
+					crate::URING
+						.register_tcp(
+							stream
+								.into_std()
+								.context("failed to convert tokio stream to std")?,
+						)
+						.await
+						.context("failed to register tcp stream")?,
+				));
 			}
 			StreamType::Udp => {
 				if !CONFIG.stream.allow_udp {

@@ -11,8 +11,7 @@ use event_listener::Event;
 use futures_util::{future::Either, FutureExt, SinkExt, StreamExt};
 use log::{debug, trace};
 use tokio::{
-	io::{AsyncWriteExt, BufReader},
-	net::TcpStream,
+	io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
 	select,
 	task::JoinSet,
 	time::interval,
@@ -34,7 +33,8 @@ use crate::{
 
 async fn copy_fast(
 	mux: MuxStream<WispStreamWrite>,
-	tcp: TcpStream,
+	tcprx: impl AsyncRead + Unpin,
+	mut tcptx: impl AsyncWrite + Unpin,
 	#[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
 		async_speed_limit::clock::StandardClock,
 	>,
@@ -45,8 +45,6 @@ async fn copy_fast(
 	let (muxrx, muxtx) = mux.into_async_rw().into_split();
 	let mut muxrx = muxrx.compat();
 	let mut muxtx = muxtx.compat_write();
-
-	let (tcprx, mut tcptx) = tcp.into_split();
 
 	#[cfg(feature = "speed-limit")]
 	let tcprx = read_limit.limit(tcprx);
@@ -126,10 +124,12 @@ async fn forward_stream(
 		ClientStream::Tcp(stream) => {
 			let closer = muxstream.get_close_handle();
 
+			let (rx, tx) = stream.into_split();
 			let ret: anyhow::Result<()> = async {
 				copy_fast(
 					muxstream,
-					stream,
+					rx,
+					tx,
 					#[cfg(feature = "speed-limit")]
 					read_limit,
 					#[cfg(feature = "speed-limit")]

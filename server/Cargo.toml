@@ -10,6 +10,7 @@ workspace = true
 anyhow = "1.0.86"
 async-speed-limit = { version = "0.4.2", optional = true, features = ["tokio"] }
 async-trait = "0.1.81"
+async-uring = { version = "0.1.0", path = "../../async-uring", optional = true }
 base64 = "0.22.1"
 bytes = "1.7.1"
 cfg-if = "1.0.0"
@@ -48,7 +49,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 wisp-mux = { version = "*", path = "../wisp", features = ["tokio-websockets", "certificate"] }
 
 [features]
-default = ["toml"]
+default = ["toml", "uring"]
 
 yaml = ["dep:serde_yaml"]
 toml = ["dep:toml"]
@@ -56,6 +57,7 @@ toml = ["dep:toml"]
 twisp = ["dep:pty-process", "dep:libc", "dep:shell-words"]
 speed-limit = ["dep:async-speed-limit"]
 tokio-console = ["dep:console-subscriber"]
+uring = ["dep:async-uring"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.0", features = ["rustc"] }

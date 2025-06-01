@@ -13,7 +13,7 @@ use rustls_pemfile::{certs, private_key};
 use tokio::{
 	fs::{remove_file, try_exists, File},
 	io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
-	net::{tcp, unix, TcpListener, TcpSocket, TcpStream, UnixListener, UnixStream},
+	net::{unix, TcpListener, TcpSocket, UnixListener, UnixStream},
 };
 use tokio_rustls::{rustls, server::TlsStream, TlsAcceptor};
 use uuid::Uuid;
@@ -44,13 +44,15 @@ impl<
 		cx: &mut std::task::Context<'_>,
 		buf: &mut tokio::io::ReadBuf<'_>,
 	) -> std::task::Poll<std::io::Result<()>> {
-		match self.get_mut() {
+		let ret = match self.get_mut() {
 			Self::One(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Two(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Three(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Four(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Five(x) => Pin::new(x).poll_read(cx, buf),
-		}
+		};
+		println!("{:X?}", buf.filled());
+		ret
 	}
 }
 
@@ -230,18 +232,37 @@ impl<A: Unpin, B: AsyncWrite + Unpin> AsyncWrite for Duplex<A, B> {
 	}
 }
 
-pub type ServerStream =
-	Quintet<TcpStream, TlsStream<TcpStream>, UnixStream, TlsStream<UnixStream>, Duplex<File, File>>;
+#[cfg(not(feature = "uring"))]
+type ServerTcpStream = tokio::net::TcpStream;
+#[cfg(not(feature = "uring"))]
+type ServerTcpReadHalf = tokio::net::tcp::OwnedReadHalf;
+#[cfg(not(feature = "uring"))]
+type ServerTcpWriteHalf = tokio::net::tcp::OwnedWriteHalf;
+
+#[cfg(feature = "uring")]
+type ServerTcpStream = async_uring::compat::Copying<async_uring::net::TcpStream>;
+#[cfg(feature = "uring")]
+type ServerTcpReadHalf = async_uring::compat::Copying<async_uring::net::tcp::ReadHalf>;
+#[cfg(feature = "uring")]
+type ServerTcpWriteHalf = async_uring::compat::Copying<async_uring::net::tcp::WriteHalf>;
+
+pub type ServerStream = Quintet<
+	ServerTcpStream,
+	TlsStream<ServerTcpStream>,
+	UnixStream,
+	TlsStream<UnixStream>,
+	Duplex<File, File>,
+>;
 pub type ServerStreamRead = Quintet<
-	tcp::OwnedReadHalf,
-	ReadHalf<TlsStream<TcpStream>>,
+	ServerTcpReadHalf,
+	ReadHalf<TlsStream<ServerTcpStream>>,
 	unix::OwnedReadHalf,
 	ReadHalf<TlsStream<UnixStream>>,
 	File,
 >;
 pub type ServerStreamWrite = Quintet<
-	tcp::OwnedWriteHalf,
-	WriteHalf<TlsStream<TcpStream>>,
+	ServerTcpWriteHalf,
+	WriteHalf<TlsStream<ServerTcpStream>>,
 	unix::OwnedWriteHalf,
 	WriteHalf<TlsStream<UnixStream>>,
 	File,
@@ -255,8 +276,11 @@ impl ServerStreamExt for ServerStream {
 	fn split(self) -> (ServerStreamRead, ServerStreamWrite) {
 		match self {
 			Self::One(x) => {
-				let (r, w) = x.into_split();
-				(Quintet::One(r), Quintet::One(w))
+				let (r, w) = unsafe { x.into_inner() }.into_split();
+				(
+					Quintet::One(async_uring::compat::Copying::new(r)),
+					Quintet::One(async_uring::compat::Copying::new(w)),
+				)
 			}
 			Self::Two(x) => {
 				let (r, w) = tokio::io::split(x);
@@ -360,7 +384,7 @@ impl ServerListener {
 		})
 	}
 
-	async fn accept_tcp(listener: &mut TcpListener) -> anyhow::Result<(TcpStream, String)> {
+	async fn accept_tcp(listener: &mut TcpListener) -> anyhow::Result<(ServerTcpStream, String)> {
 		let (stream, addr) = listener
 			.accept()
 			.await
@@ -370,7 +394,16 @@ impl ServerListener {
 				.set_nodelay(true)
 				.context("failed to set tcp nodelay")?;
 		}
-		Ok((stream, addr.to_string()))
+		#[cfg(feature = "uring")]
+		let stream = crate::URING
+			.register_tcp(
+				stream
+					.into_std()
+					.context("failed to convert tokio stream to std")?,
+			)
+			.await
+			.context("failed to register tcp stream")?;
+		Ok((async_uring::compat::Copying::new(stream), addr.to_string()))
 	}
 
 	async fn accept_unix(listener: &mut UnixListener) -> anyhow::Result<(UnixStream, String)> {

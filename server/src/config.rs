@@ -70,6 +70,7 @@ pub enum RuntimeFlavor {
 	/// Alternate multi-threaded tokio runtime.
 	#[cfg(tokio_unstable)]
 	MultiThreadAlt,
+	#[cfg(not(feature = "uring"))]
 	/// Thread-per-core tokio runtimes.
 	ThreadPerCore,
 }
@@ -77,6 +78,7 @@ pub enum RuntimeFlavor {
 impl RuntimeFlavor {
 	pub fn is_thread_per_core(&self) -> bool {
 		match self {
+			#[cfg(not(feature = "uring"))]
 			Self::ThreadPerCore => true,
 			_ => false,
 		}
