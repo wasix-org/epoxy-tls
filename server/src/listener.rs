@@ -44,15 +44,13 @@ impl<
 		cx: &mut std::task::Context<'_>,
 		buf: &mut tokio::io::ReadBuf<'_>,
 	) -> std::task::Poll<std::io::Result<()>> {
-		let ret = match self.get_mut() {
+		match self.get_mut() {
 			Self::One(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Two(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Three(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Four(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Five(x) => Pin::new(x).poll_read(cx, buf),
-		};
-		println!("{:X?}", buf.filled());
-		ret
+		}
 	}
 }
 
