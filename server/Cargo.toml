@@ -61,3 +61,6 @@ uring = ["dep:async-uring"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.0", features = ["rustc"] }
+
+[target.'cfg(tokio_unstable)'.dependencies]
+console-subscriber = "0.4.1"

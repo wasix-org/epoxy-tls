@@ -133,6 +133,9 @@ static JEMALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[doc(hidden)]
 fn main() -> Result<()> {
+	#[cfg(tokio_unstable)]
+	console_subscriber::init();
+
 	if CLI.default_config {
 		println!("{}", Config::default().ser()?);
 		return Ok(());
@@ -146,8 +149,6 @@ fn main() -> Result<()> {
 	let mut builder: runtime::Builder = match CONFIG.server.runtime {
 		RuntimeFlavor::SingleThread => runtime::Builder::new_current_thread(),
 		RuntimeFlavor::MultiThread => runtime::Builder::new_multi_thread(),
-		#[cfg(tokio_unstable)]
-		RuntimeFlavor::MultiThreadAlt => runtime::Builder::new_multi_thread_alt(),
 
 		#[cfg(not(feature = "uring"))]
 		// threadpercore has completely different runtime setup
