@@ -179,3 +179,29 @@ impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
 	}
 }
+#[cfg(feature = "embedded-nal-async")]
+const _: () = {
+	use crate::stream::MuxStreamAsyncRW;
+
+	impl<W: TransportWrite> embedded_nal_async::TcpConnect for Multiplexor<ClientImpl, W> {
+		type Error = std::io::Error;
+
+		type Connection<'a>
+			= MuxStreamAsyncRW<W>
+		where
+			Self: 'a;
+
+		async fn connect<'a>(
+			&'a self,
+			remote: std::net::SocketAddr,
+		) -> Result<Self::Connection<'a>, Self::Error> {
+			use std::io::ErrorKind;
+
+			let mut stream = self
+				.new_stream(StreamType::Tcp, remote.ip().to_string(), remote.port())
+				.await
+				.map_err(|e| std::io::Error::new(ErrorKind::Other, e))?;
+			Ok(stream.into_async_rw())
+		}
+	}
+};
