@@ -15,7 +15,7 @@ use wisp_mux::{
 		ProtocolExtensionBuilder,
 	},
 	stream::{MuxStreamAsyncRead, MuxStreamAsyncWrite},
-	ws::{WebSocketRead, WebSocketWrite},
+	ws::{TransportRead as WebSocketRead, TransportWrite as WebSocketWrite},
 	WispError,
 };
 

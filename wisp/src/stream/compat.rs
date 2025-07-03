@@ -73,6 +73,22 @@ impl<W: TransportWrite> AsyncBufRead for MuxStreamAsyncRead<W> {
 	}
 }
 
+#[cfg(feature = "embedded-io-async")]
+const _: () = {
+	use embedded_io_async::ErrorType;
+
+	impl<W: TransportWrite> ErrorType for MuxStreamAsyncRead<W> {
+		type Error = std::io::Error;
+	}
+	impl<W: TransportWrite> embedded_io_async::Read for MuxStreamAsyncRead<W> {
+		async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+			use futures::AsyncReadExt;
+
+			AsyncReadExt::read(self, buf).await
+		}
+	}
+};
+
 pub struct MuxStreamAsyncWrite<W: TransportWrite> {
 	inner: flume::r#async::SendSink<'static, WsEvent<W>>,
 	write: LockedWebSocketWrite<W>,
@@ -159,6 +175,22 @@ impl<W: TransportWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
 	}
 }
 
+#[cfg(feature = "embedded-io-async")]
+const _: () = {
+	use embedded_io_async::ErrorType;
+
+	impl<W: TransportWrite> ErrorType for MuxStreamAsyncWrite<W> {
+		type Error = std::io::Error;
+	}
+	impl<W: TransportWrite> embedded_io_async::Write for MuxStreamAsyncWrite<W> {
+		async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+			use futures::AsyncWriteExt;
+
+			AsyncWriteExt::write(self, buf).await
+		}
+	}
+};
+
 #[pin_project]
 pub struct MuxStreamAsyncRW<W: TransportWrite> {
 	#[pin]
@@ -238,3 +270,25 @@ impl<W: TransportWrite> AsyncWrite for MuxStreamAsyncRW<W> {
 		self.project().write.poll_close(cx)
 	}
 }
+#[cfg(feature = "embedded-io-async")]
+const _: () = {
+	use embedded_io_async::ErrorType;
+
+	impl<W: TransportWrite> ErrorType for MuxStreamAsyncRW<W> {
+		type Error = std::io::Error;
+	}
+	impl<W: TransportWrite> embedded_io_async::Read for MuxStreamAsyncRW<W> {
+		async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+			use futures::AsyncReadExt;
+
+			AsyncReadExt::read(self, buf).await
+		}
+	}
+	impl<W: TransportWrite> embedded_io_async::Write for MuxStreamAsyncRW<W> {
+		async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+			use futures::AsyncWriteExt;
+
+			AsyncWriteExt::write(self, buf).await
+		}
+	}
+};
