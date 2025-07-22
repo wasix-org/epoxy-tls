@@ -1,5 +1,11 @@
 use std::{
-	io::{BufReader, Cursor}, net::SocketAddr, os::fd::AsFd, path::PathBuf, pin::Pin, str::FromStr, sync::Arc
+	io::{BufReader, Cursor},
+	net::SocketAddr,
+	os::fd::AsFd,
+	path::PathBuf,
+	pin::Pin,
+	str::FromStr,
+	sync::Arc,
 };
 
 use anyhow::Context;

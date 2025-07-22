@@ -34,7 +34,7 @@ use wisp_mux::{
 		AnyProtocolExtensionBuilder, ProtocolExtensionListExt,
 	},
 	packet::StreamType,
-	ws::{TokioWebsocketsTransport, TransportWrite, TransportExt},
+	ws::{TokioWebsocketsTransport, TransportExt, TransportWrite},
 	ClientMux, WispError, WispV2Handshake,
 };
 

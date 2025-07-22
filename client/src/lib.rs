@@ -1,4 +1,4 @@
-#![feature(let_chains, impl_trait_in_assoc_type)]
+#![feature(impl_trait_in_assoc_type)]
 
 use std::{error::Error, str::FromStr, sync::Arc};
 

@@ -18,7 +18,7 @@ if [ "$(wasm-bindgen -V)" != "$WBG" ]; then
 	exit 1
 fi
 
-export CFLAGS='-O3' RUSTFLAGS='-Zlocation-detail=none -C target-cpu=mvp'
+export CFLAGS='-O3' RUSTFLAGS='-Zlocation-detail=none -C target-cpu=mvp --cfg getrandom_backend="wasm_js"'
 cargo build --target wasm32-unknown-unknown -Z build-std=panic_abort,std -Z build-std-features=panic_immediate_abort,optimize_for_size --release $CARGOFLAGS "$@"
 echo "[epx] cargo finished"
 wasm-bindgen --target web --out-dir out/ ../target/wasm32-unknown-unknown/release/epoxy_client.wasm
