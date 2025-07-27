@@ -7,11 +7,7 @@ use std::{
 	task::Context,
 };
 
-use futures::{
-	channel::oneshot,
-	stream::{select, unfold},
-	SinkExt, StreamExt,
-};
+use futures::{channel::oneshot, stream::unfold, SinkExt, StreamExt};
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -22,6 +18,7 @@ use crate::{
 		PacketType, StreamType,
 	},
 	stream::MuxStream,
+	unfair_select::unfair_select,
 	ws::{Payload, TransportRead, TransportWrite},
 	LockedWebSocketWrite, WispError,
 };
@@ -285,7 +282,7 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 			},
 		));
 
-		let mut stream = select(read_stream, actor_rx.into_stream().map(Ok));
+		let mut stream = unfair_select(read_stream, actor_rx.into_stream().map(Ok));
 
 		while let Some(msg) = stream.next().await {
 			match msg? {
