@@ -223,7 +223,7 @@ async fn forward_stream(
 				.close(CloseReason::ServerStreamBlockedAddress)
 				.await;
 		}
-	};
+	}
 }
 
 async fn handle_stream(
@@ -239,19 +239,19 @@ async fn handle_stream(
 		async_speed_limit::clock::StandardClock,
 	>,
 ) {
-	let Some((requested_stream, resolved_stream, stream)) =
-		resolve_stream(connect, &muxstream).await
-	else {
+	let uuid = Uuid::new_v4();
+	debug!("[{id}] [{uuid}] stream requested: {connect:?}");
+
+	let Some((requested_stream, resolved_stream, stream)) = select! (
+		x = resolve_stream(connect, &muxstream) => x,
+		() = event.listen() => None
+	) else {
+		debug!("[{id}] [{uuid}] stream cancelled");
 		// muxstream was closed
 		return;
 	};
 
-	let uuid = Uuid::new_v4();
-
-	debug!(
-		"new stream created for client id {:?}: (stream uuid {:?}) {:?} {:?}",
-		id, uuid, requested_stream, resolved_stream
-	);
+	debug!("[{id}] [{uuid}] stream resolved and connected: {resolved_stream:?}");
 
 	if let Some(client) = CLIENTS.lock().await.get(&id) {
 		client
@@ -276,10 +276,10 @@ async fn handle_stream(
 
 	select! {
 		x = forward_fut => x,
-		x = event.listen() => x,
+		() = event.listen() => (),
 	};
 
-	debug!("stream uuid {:?} disconnected for client id {:?}", uuid, id);
+	debug!("[{id}] [{uuid}] stream disconnected");
 
 	if let Some(client) = CLIENTS.lock().await.get(&id) {
 		client.0.lock().await.remove(&uuid);
@@ -333,8 +333,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	let mux = Arc::new(mux);
 
 	debug!(
-		"new wisp client id {:?} connected with extensions {:?}, downgraded {:?}",
-		id,
+		"[{id}] client connected with extensions {:?}, downgraded {:?}",
 		mux.get_extension_ids(),
 		mux.was_downgraded()
 	);
@@ -343,7 +342,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	let event: Arc<Event> = Event::new().into();
 
 	let mux_id = id.clone();
-	set.spawn(fut.map(move |x| debug!("wisp client id {:?} multiplexor result {:?}", mux_id, x)));
+	set.spawn(fut.map(move |x| debug!("[{mux_id}] multiplexor result: {x:?}")));
 
 	let ping_mux = mux.clone();
 	let ping_event = event.clone();
@@ -363,7 +362,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		};
 
 		while (send_ping)().await.is_ok() {
-			trace!("sent ping to wisp client id {:?}", ping_id);
+			trace!("[{ping_id}] sent ping");
 			select! {
 				_ = interval.tick() => (),
 				() = ping_event.listen() => break,
@@ -386,16 +385,16 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		));
 	}
 
-	debug!("shutting down wisp client id {:?}", id);
+	debug!("[{id}] shutting down wisp client");
 
 	let _ = mux.close().await;
 	event.notify(usize::MAX);
 
-	trace!("waiting for tasks to close for wisp client id {:?}", id);
+	trace!("[{id}] waiting for tasks to close");
 
 	while set.join_next().await.is_some() {}
 
-	debug!("wisp client id {:?} disconnected", id);
+	debug!("[{id}] client disconnected");
 
 	Ok(())
 }

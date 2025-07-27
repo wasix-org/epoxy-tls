@@ -53,40 +53,6 @@ pub struct UnfairSelect<S1, S2> {
 	next: PollNext,
 	finished: bool,
 }
-impl<S1, S2> UnfairSelect<S1, S2> {
-	/// Acquires a reference to the underlying streams that this combinator is
-	/// pulling from.
-	pub fn get_ref(&self) -> (&S1, &S2) {
-		(&self.stream1, &self.stream2)
-	}
-
-	/// Acquires a mutable reference to the underlying streams that this
-	/// combinator is pulling from.
-	///
-	/// Note that care must be taken to avoid tampering with the state of the
-	/// stream which may otherwise confuse this combinator.
-	pub fn get_mut(&mut self) -> (&mut S1, &mut S2) {
-		(&mut self.stream1, &mut self.stream2)
-	}
-
-	/// Acquires a pinned mutable reference to the underlying streams that this
-	/// combinator is pulling from.
-	///
-	/// Note that care must be taken to avoid tampering with the state of the
-	/// stream which may otherwise confuse this combinator.
-	pub fn get_pin_mut(self: Pin<&mut Self>) -> (Pin<&mut S1>, Pin<&mut S2>) {
-		let this = self.project();
-		(this.stream1, this.stream2)
-	}
-
-	/// Consumes this combinator, returning the underlying streams.
-	///
-	/// Note that this may discard intermediate state of this combinator, so
-	/// care should be taken to avoid losing resources when this is called.
-	pub fn into_inner(self) -> (S1, S2) {
-		(self.stream1, self.stream2)
-	}
-}
 impl<S1, S2> FusedStream for UnfairSelect<S1, S2>
 where
 	S1: Stream,
