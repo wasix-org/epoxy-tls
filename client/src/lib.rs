@@ -58,7 +58,8 @@ type EpoxyIoStream = {
 	read: ReadableStream<Uint8Array>,
 	write: WritableStream<Uint8Array>,
 };
-type EpoxyWispTransport = string | (() => { read: ReadableStream<ArrayBuffer>, write: WritableStream<Uint8Array> });
+type EpoxyWispTransportResult = { read: ReadableStream<ArrayBuffer>, write: WritableStream<Uint8Array> };
+type EpoxyWispTransport = string | (() => Promise<EpoxyWispTransportResult> | EpoxyWispTransportRes);
 type EpoxyWebSocketInput = string | ArrayBuffer;
 type EpoxyWebSocketHeadersInput = Headers | { [key: string]: string };
 type EpoxyUrlInput = string | URL;

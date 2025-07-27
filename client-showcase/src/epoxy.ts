@@ -31,7 +31,6 @@ export async function createEpoxy() {
 	options.udp_extension_required = false;
 
 	currentWispUrl = settings.wispServer;
-	// @ts-ignore TODO fix types
 	currentClient = new EpoxyClient(async () => {
 		try {
 			const wss = new WebSocketStream(settings.wispServer);
