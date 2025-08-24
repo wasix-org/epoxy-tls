@@ -111,6 +111,7 @@ async fn forward_stream(
 	muxstream: MuxStream<WispStreamWrite>,
 	stream: ClientStream,
 	resolved_stream: ConnectPacket,
+	id: &str,
 	uuid: Uuid,
 	#[cfg(feature = "twisp")] twisp_map: twisp::TwispMap,
 	#[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
@@ -124,6 +125,7 @@ async fn forward_stream(
 		ClientStream::Tcp(stream) => {
 			let closer = muxstream.get_close_handle();
 
+			trace!("[{id}] [{uuid}] [forward] starting tcp copy_fast");
 			let (rx, tx) = stream.into_split();
 			let ret: anyhow::Result<()> = async {
 				copy_fast(
@@ -139,6 +141,7 @@ async fn forward_stream(
 				Ok(())
 			}
 			.await;
+			trace!("[{id}] [{uuid}] [forward] ended tcp copy_fast");
 
 			match ret {
 				Ok(()) => {
@@ -154,6 +157,7 @@ async fn forward_stream(
 			let (mut read, write) = muxstream.into_split();
 			let mut write = write.into_async_write().compat_write();
 
+			trace!("[{id}] [{uuid}] [forward] starting udp copy");
 			let ret: anyhow::Result<()> = async move {
 				let mut data = vec![0u8; 65507];
 				loop {
@@ -173,6 +177,7 @@ async fn forward_stream(
 				}
 			}
 			.await;
+			trace!("[{id}] [{uuid}] [forward] ended udp copy");
 
 			match ret {
 				Ok(()) => {
@@ -213,12 +218,15 @@ async fn forward_stream(
 			.await;
 		}
 		ClientStream::NoResolvedAddrs => {
+			trace!("[{id}] [{uuid}] [forward] no resolved addrs");
 			let _ = muxstream.close(CloseReason::ServerStreamUnreachable).await;
 		}
 		ClientStream::Invalid => {
+			trace!("[{id}] [{uuid}] [forward] invalid");
 			let _ = muxstream.close(CloseReason::ServerStreamInvalidInfo).await;
 		}
 		ClientStream::Blocked => {
+			trace!("[{id}] [{uuid}] [forward] blocked");
 			let _ = muxstream
 				.close(CloseReason::ServerStreamBlockedAddress)
 				.await;
@@ -265,6 +273,7 @@ async fn handle_stream(
 		muxstream,
 		stream,
 		resolved_stream,
+		&id,
 		uuid,
 		#[cfg(feature = "twisp")]
 		twisp_map,
