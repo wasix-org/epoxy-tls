@@ -9,9 +9,9 @@ use anyhow::Context;
 use cfg_if::cfg_if;
 use event_listener::Event;
 use futures_util::{future::Either, FutureExt, SinkExt, StreamExt};
-use log::{debug, trace};
+use log::{info, error, debug, trace};
 use tokio::{
-	io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+	io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
 	select,
 	task::JoinSet,
 	time::interval,
@@ -31,34 +31,105 @@ use crate::{
 	CLIENTS, CONFIG,
 };
 
+
+async fn manual_copy_buf<R, W>(
+    mut reader: R,
+    mut writer: W,
+    direction: &'static str,
+    buffer_size: usize,
+) -> std::io::Result<u64>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buffer = vec![0; buffer_size];
+    let mut bytes_copied = 0;
+
+    loop {
+        // Attempt to read from the reader
+        let read_result = reader.read(&mut buffer).await;
+        let n = match read_result {
+            Ok(0) => {
+                // Reader returned 0 bytes, indicating EOF
+                break; // Exit the loop on EOF
+            },
+            Ok(n) => {
+                n
+            }, // Successfully read `n` bytes
+            Err(e) => {
+                // An error occurred during reading
+                error!("{}: Reader: Error reading: {:?}", direction, e);
+                return Err(e); // Propagate the read error
+            }
+        };
+
+        // Attempt to write the read data to the writer
+        let write_result = writer.write_all(&buffer[..n]).await;
+        if let Err(e) = write_result {
+            // An error occurred during writing
+            error!("{}: Writer: Error writing: {:?}", direction, e);
+            return Err(e); // Propagate the write error
+        }
+
+
+        // Attempt to flush the writer to ensure data is sent
+        let flush_result = writer.flush().await;
+        if let Err(e) = flush_result {
+            // An error occurred during flushing
+            error!("{}: Writer: Error flushing: {:?}", direction, e);
+            return Err(e); // Propagate the flush error
+        }
+
+
+        bytes_copied += n as u64;
+    }
+
+    info!("{}: Manual copy operation finished. Total bytes copied: {}", direction, bytes_copied);
+    Ok(bytes_copied)
+}
+
+/// The main `copy_fast` function, now using `manual_copy_buf` for both directions.
+/// This function sets up two concurrent data transfer tasks.
 async fn copy_fast(
-	mux: MuxStream<WispStreamWrite>,
-	tcprx: impl AsyncRead + Unpin,
-	mut tcptx: impl AsyncWrite + Unpin,
-	#[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
-		async_speed_limit::clock::StandardClock,
-	>,
-	#[cfg(feature = "speed-limit")] write_limit: async_speed_limit::Limiter<
-		async_speed_limit::clock::StandardClock,
-	>,
+    mux: MuxStream<WispStreamWrite>,
+    tcprx: impl AsyncRead + Unpin,
+    mut tcptx: impl AsyncWrite + Unpin,
+    #[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
+        async_speed_limit::clock::StandardClock,
+    >,
+    #[cfg(feature = "speed-limit")] write_limit: async_speed_limit::Limiter<
+        async_speed_limit::clock::StandardClock,
+    >,
 ) -> std::io::Result<()> {
-	let (muxrx, muxtx) = mux.into_async_rw().into_split();
-	let mut muxrx = muxrx.compat();
-	let mut muxtx = muxtx.compat_write();
+    // Split the MuxStream into its read and write halves
+    let (muxrx_raw, muxtx_raw) = mux.into_async_rw().into_split();
+    let mut muxrx = muxrx_raw.compat(); // Adapt to tokio::io::AsyncRead
+    let mut muxtx = muxtx_raw.compat_write(); // Adapt to tokio::io::AsyncWrite
 
-	#[cfg(feature = "speed-limit")]
-	let tcprx = read_limit.limit(tcprx);
-	#[cfg(feature = "speed-limit")]
-	let mut tcptx = write_limit.limit(tcptx);
+    // Apply speed limits if the feature is enabled
+    #[cfg(feature = "speed-limit")]
+    let tcprx = read_limit.limit(tcprx);
+    #[cfg(feature = "speed-limit")]
+    let mut tcptx = write_limit.limit(tcptx);
 
-	let mut tcprx = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
+    // Buffer the TCP read stream for efficiency
+    let mut tcprx_buf = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
 
-	select! {
-		x = tokio::io::copy_buf(&mut muxrx, &mut tcptx) => x?,
-		x = tokio::io::copy(&mut tcprx, &mut muxtx) => x?,
-	};
+    info!("Starting concurrent copy operations for Mux <-> TCP.");
 
-	Ok(())
+    // Concurrently copy data in both directions using the manual_copy_buf function.
+    // The `x?` operator will propagate any `std::io::Error` from either task.
+    select! {
+        x = manual_copy_buf(&mut muxrx, &mut tcptx, "Mux to TCP", CONFIG.stream.buffer_size) => {
+            x.map(|_| info!("Mux to TCP copy completed."))
+        },
+        x = manual_copy_buf(&mut tcprx_buf, &mut muxtx, "TCP to Mux", CONFIG.stream.buffer_size) => {
+            x.map(|_| info!("TCP to Mux copy completed."))
+        },
+    }?; // Propagate the first error or complete successfully
+
+    info!("All copy operations completed successfully.");
+    Ok(())
 }
 
 async fn resolve_stream(

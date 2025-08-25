@@ -10,7 +10,7 @@ workspace = true
 anyhow = "1.0.86"
 async-speed-limit = { version = "0.4.2", optional = true, features = ["tokio"] }
 async-trait = "0.1.81"
-async-uring = { version = "0.1.0", path = "../../async-uring", optional = true }
+async-uring = { version = "0.1.0", git = "https://github.com/r58playz/async-uring", optional = true }
 base64 = "0.22.1"
 bytes = "1.7.1"
 cfg-if = "1.0.0"
