@@ -160,7 +160,7 @@ dependencies = [
 [[package]]
 name = "async-uring"
 version = "0.1.0"
-source = "git+https://github.com/r58playz/async-uring#868ee854df5d1a7e0a3649a80d661d4695675c81"
+source = "git+https://github.com/r58playz/async-uring#cacfbefc00186cd28335ba86d625ba4c1b1a8b7e"
 dependencies = [
  "diatomic-waker",
  "futures",
@@ -1328,7 +1328,7 @@ dependencies = [
  "hyper",
  "libc",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2688,7 +2688,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
