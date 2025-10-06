@@ -155,8 +155,11 @@ pub async fn handle_wsproxy(
 						}
 						x = stream.fill_buf() => {
 							let x = x?;
-							ws.write(x.to_vec()).await?;
 							let len = x.len();
+							if len == 0 {
+								break Ok(());
+							}
+							ws.write(x.to_vec()).await?;
 							stream.consume(len);
 						}
 					}
