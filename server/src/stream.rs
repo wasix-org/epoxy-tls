@@ -169,22 +169,8 @@ impl ClientStream {
 			return Ok(ResolvedPacket::Blocked);
 		}
 
-		if let Ok(addr) = IpAddr::from_str(&packet.host) {
+		if IpAddr::from_str(&packet.host).is_ok() {
 			if !CONFIG.stream.allow_direct_ip {
-				return Ok(ResolvedPacket::Blocked);
-			}
-
-			if addr.is_loopback() && !CONFIG.stream.allow_loopback {
-				return Ok(ResolvedPacket::Blocked);
-			}
-
-			if addr.is_multicast() && !CONFIG.stream.allow_multicast {
-				return Ok(ResolvedPacket::Blocked);
-			}
-
-			if (is_global(addr) && !CONFIG.stream.allow_global)
-				|| (!is_global(addr) && !CONFIG.stream.allow_non_global)
-			{
 				return Ok(ResolvedPacket::Blocked);
 			}
 		}
@@ -212,14 +198,30 @@ impl ClientStream {
 			.await
 			.context("failed to resolve hostname")?
 			.filter(|x| CONFIG.server.resolve_ipv6 || x.is_ipv4())
-			.map(|x| ConnectPacket {
-				stream_type: packet.stream_type,
-				host: x.to_string(),
-				port: packet.port,
+			.map(|addr| {
+				if addr.is_loopback() && !CONFIG.stream.allow_loopback {
+					return ResolvedPacket::Blocked;
+				}
+
+				if addr.is_multicast() && !CONFIG.stream.allow_multicast {
+					return ResolvedPacket::Blocked;
+				}
+
+				if (is_global(addr) && !CONFIG.stream.allow_global)
+					|| (!is_global(addr) && !CONFIG.stream.allow_non_global)
+				{
+					return ResolvedPacket::Blocked;
+				}
+
+				ResolvedPacket::Valid(ConnectPacket {
+					stream_type: packet.stream_type,
+					host: addr.to_string(),
+					port: packet.port,
+				})
 			})
 			.next();
 
-		Ok(packet.map_or(ResolvedPacket::NoResolvedAddrs, ResolvedPacket::Valid))
+		Ok(packet.unwrap_or(ResolvedPacket::NoResolvedAddrs))
 	}
 
 	pub async fn connect(packet: ConnectPacket) -> anyhow::Result<Self> {
