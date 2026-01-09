@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-check:
+    name: Check Version
+    runs-on: ubuntu-latest
+    env:
+        working-directory: ./client
+    outputs:
+      version_changed: ${{ steps.check.outputs.exit_code }}
+      new_version: ${{ steps.check.outputs.exit_code }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check the version
+        id: check
+        run: |
+          CURRENT_VERSION=$(jq -r .version package.json)
+          echo "Current version: $CURRENT_VERSION"
+          LATEST_VERSION=$(npm view @mercuryworkshop/epoxy-tls versions --json | jq -r '.[-1]' || echo "0.0.0")
+          echo "Latest NPM version: $LATEST_VERSION"
+
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ];
+          then
+            echo "Version changed"
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+            echo "new_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version not changed"
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build Epoxy (client)
+    runs-on: ubuntu-latest
+    env:
+        working-directory: ./client
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: install wbg
+        uses: jetli/wasm-bindgen-action@v0.2.0
+        with:
+          version: '0.2.100'
+
+      - name: Setup Binaryen
+        uses: Aandreba/setup-binaryen@v1.0.0
+        with:
+          token: ${{ github.token }}
+
+      - name: Pack Epoxy
+        run: pnpm pack
+
+      - name: Upload Artifact (epoxy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: epoxy-client
+          path: |
+            ./full/*
+            ./minimal/*
+
+      - name: Upload Artifact (packaged)
+        uses: actions/upload-artifact@v4
+        with:
+          name: epoxy-client-package
+          path: mercuryworkshop-epoxy-tls-*.tgz
+          
+  upload:
+    name: Upload release
+    runs-on: ubuntu-latest
+    needs: [version-check, build]
+    permissions: write-all
+    if: github.ref == 'refs/heads/multiplexed'
+
+    steps:
+      - name: Delete old release and tag
+        uses: dev-drprasad/delete-tag-and-release@v1.1
+        with:
+          delete_release: true
+          tag_name: latest
+          github_token: ${{ github.token }}
+
+      - name: Get artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packaged-scramjet
+          path: .
+
+      - name: Release unstable build to GitHub
+        uses: ncipollo/release-action@v1
+        with:
+          name: Continuous Build
+          tag: latest
+          commit: main
+          body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
+          artifacts: "mercuryworkshop-scramjet-*.tgz"
+          prerelease: true
+
+      - name: Release tagged version to GitHub
+        if: needs.version-check.outputs.version_changed == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          name: "${{ needs.version-check.outputs.new_version }}"
+          tag: "v${{ needs.version-check.outputs.new_version }}"
+          commit: main
+          body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
+          artifacts: "mercuryworkshop-scramjet-*.tgz"
+
+  publish:
+    name: Publish Epoxy to NPM
+    runs-on: ubuntu-latest
+    needs: [version-check, build]
+    permissions: write-all
+    if: ${{ (needs.version-check.outputs.version_changed == 'true') && (github.ref == 'refs/heads/multiplexed') }}
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Get artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: epoxy-client-packaged
+          path: .
+
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Publish
+        run: npm publish mercuryworkshop-epoxy-tls-${{ needs.version-check.outputs.new_version }}.tgz --access public --no-git-checks
+
+  pages:
+    name: Upload to Github Pages
+    runs-on: ubuntu-latest
+    needs: [build]
+    env:
+        working-directory: ./client-showcase
+    permissions: write-all
+    if: github.ref == 'refs/heads/multiplexed'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Get artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: epoxy-client
+          path: "../client"
+        
+      - name: Install dependencies
+        run: pnpm install
+      
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "./dist"
+
+      - name: Deploy to github
+        id: deployment
+        uses: actions/deploy-pages@v4
