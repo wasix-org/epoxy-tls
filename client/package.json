@@ -20,6 +20,7 @@
 		"url": "git+https://github.com/MercuryWorkshop/epoxy-tls.git"
 	},
 	"license": "AGPL-3.0-only",
+	"packageManager": "pnpm@10.27.0",
 	"exports": {
 		".": {
 			"import": "./full/epoxy-bundled.js",
