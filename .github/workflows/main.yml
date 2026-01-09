@@ -16,8 +16,9 @@ jobs:
   version-check:
     name: Check Version
     runs-on: ubuntu-latest
-    env:
-        working-directory: ./client
+    defaults:
+      run:
+          working-directory: ./client
     outputs:
       version_changed: ${{ steps.check.outputs.exit_code }}
       new_version: ${{ steps.check.outputs.exit_code }}
@@ -47,8 +48,9 @@ jobs:
   build:
     name: Build Epoxy (client)
     runs-on: ubuntu-latest
-    env:
-        working-directory: ./client
+    defaults:
+      run:
+          working-directory: ./client
         
     steps:
       - name: Checkout code
@@ -161,8 +163,9 @@ jobs:
     name: Upload to Github Pages
     runs-on: ubuntu-latest
     needs: [build]
-    env:
-        working-directory: ./client-showcase
+    defaults:
+      run:
+          working-directory: ./client-showcase
     permissions: write-all
     if: github.ref == 'refs/heads/multiplexed'
 
