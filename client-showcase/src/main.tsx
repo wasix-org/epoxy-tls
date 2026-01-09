@@ -1,32 +1,13 @@
-import 'dreamland';
-import { settings } from './store';
 
-import "./style.css";
-import { Git, Link } from './util';
-import { Demo } from './demo';
+import { css, type Component } from "dreamland/core";
+import settings from "./store";
 
-const Theme: Component<{}> = function() {
-	this.css = `
-		text-decoration: underline !important;
-	`;
-	return <a on:click={() => settings.theme = settings.theme === "light" ? "dark" : "light"} href="#"><i>{use(settings.theme)}</i></a>;
-}
+import Demo from "./demo";
+import Git from "./components/git";
+import Link from "./components/link"
+import Theme from "./components/theme"
 
-const App: Component<{}, {}> = function() {
-	this.css = `
-		background: var(--bg-sub);
-		color: var(--fg);
-
-		padding: 1rem;
-		overflow: scroll;
-
-		.root {
-			margin: auto;
-			padding: 1rem;
-			max-width: 64rem;
-		}
-	`;
-
+const App: Component = function() {
 	return (
 		<div id="app" class={use(settings.theme)}>
 			<div class="root">
@@ -85,6 +66,20 @@ const App: Component<{}, {}> = function() {
 		</div>
 	);
 }
+App.style = css`
+	:scope {
+		background: var(--bg-sub);
+		color: var(--fg);
+
+		padding: 1rem;
+		overflow: scroll;
+	}
+	.root {
+		margin: auto;
+		padding: 1rem;
+		max-width: 64rem;
+	}
+`;
 
 const root = document.getElementById("app")!;
 try {

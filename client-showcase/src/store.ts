@@ -1,14 +1,11 @@
-export const settings: Stateful<{
-	epoxyVersion: string,
-	wispServer: string,
+import { createStore } from "dreamland/core";
 
-	theme: "light" | "dark",
-}> = $store({
+const settings =  createStore({
 	epoxyVersion: "",
 	wispServer: "wss://wisp.mercurywork.shop/",
-
 	theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
 }, { ident: "epoxy-showcase-settings", backing: "localstorage", autosave: "auto" })
 
 // @ts-ignore
 window.settings = settings;
+export default settings;

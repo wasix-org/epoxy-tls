@@ -1,5 +1,5 @@
 import epoxyInit, { EpoxyClient, EpoxyClientOptions, info as epoxyInfo } from "@mercuryworkshop/epoxy-tls/minimal-epoxy";
-import { settings } from "./store";
+import settings from "./store";
 import { WebSocketStream } from "./loggingws";
 
 export let epoxyVersion = epoxyInfo.version + epoxyInfo.commit + epoxyInfo.release;

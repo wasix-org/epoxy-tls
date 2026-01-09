@@ -1,12 +1,12 @@
 // https://github.com/CarterLi/websocketstream-polyfill modified for logging
-
+import { createState } from "dreamland/core";
 export type Packet = {
 	type: "rx" | "tx",
 	text: string,
 	hex: string,
 }
 
-export const logger: Stateful<{ logged: Packet[] }> = $state({ logged: [] });
+export const logger = createState({ logged: [] as Packet[]});
 
 function split<T>(arr: T[], len: number): T[][] {
 	const ret = [];
