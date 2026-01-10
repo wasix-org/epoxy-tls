@@ -56,14 +56,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "pnpm"
 
       - name: install wbg
         uses: jetli/wasm-bindgen-action@v0.2.0
@@ -76,15 +72,15 @@ jobs:
           token: ${{ github.token }}
 
       - name: Pack Epoxy
-        run: pnpm pack
+        run: npm pack
 
       - name: Upload Artifact (epoxy)
         uses: actions/upload-artifact@v4
         with:
           name: epoxy-client
           path: |
-            ./full/*
-            ./minimal/*
+            ./client/full
+            ./client/minimal
 
       - name: Upload Artifact (packaged)
         uses: actions/upload-artifact@v4
@@ -110,7 +106,7 @@ jobs:
       - name: Get artifacts
         uses: actions/download-artifact@v4
         with:
-          name: packaged-scramjet
+          name: epoxy-client-package
           path: .
 
       - name: Release unstable build to GitHub
@@ -120,7 +116,7 @@ jobs:
           tag: latest
           commit: main
           body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
-          artifacts: "mercuryworkshop-scramjet-*.tgz"
+          artifacts: "mercuryworkshop-epoxy-tls-*.tgz"
           prerelease: true
 
       - name: Release tagged version to GitHub
@@ -131,7 +127,7 @@ jobs:
           tag: "v${{ needs.version-check.outputs.new_version }}"
           commit: main
           body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
-          artifacts: "mercuryworkshop-scramjet-*.tgz"
+          artifacts: "mercuryworkshop-epoxy-tls-*.tgz"
 
   publish:
     name: Publish Epoxy to NPM
@@ -175,18 +171,21 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ./client-showcase/package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "pnpm"
+          cache-dependency-path: ./client-showcase/pnpm-lock.yaml
 
       - name: Get artifacts
         uses: actions/download-artifact@v4
         with:
           name: epoxy-client
-          path: "../client"
+          path: "./client"
         
       - name: Install dependencies
         run: pnpm install
@@ -197,7 +196,7 @@ jobs:
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "./dist"
+          path: "./client-showcase/dist"
 
       - name: Deploy to github
         id: deployment
