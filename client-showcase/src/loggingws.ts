@@ -89,7 +89,7 @@ export class WebSocketStream<T extends Uint8Array | string = Uint8Array | string
 					}),
 					writable: new WritableStream<T>({
 						write(chunk) {
-							const data = chunk as ArrayBuffer;
+							const data = chunk as unknown as ArrayBuffer;
 							logger.logged = [...logger.logged, { type: "tx", text: toText(data), hex: toHex(data) }];
 							ws.send(data);
 						},

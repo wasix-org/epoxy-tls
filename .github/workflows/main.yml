@@ -86,7 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: epoxy-client-package
-          path: mercuryworkshop-epoxy-tls-*.tgz
+          path: mercuryworkshop-epoxy-tls*.tgz
           
   upload:
     name: Upload release
@@ -116,7 +116,7 @@ jobs:
           tag: latest
           commit: main
           body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
-          artifacts: "mercuryworkshop-epoxy-tls-*.tgz"
+          artifacts: "mercuryworkshop-epoxy-tls*.tgz"
           prerelease: true
 
       - name: Release tagged version to GitHub
@@ -127,7 +127,7 @@ jobs:
           tag: "v${{ needs.version-check.outputs.new_version }}"
           commit: main
           body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
-          artifacts: "mercuryworkshop-epoxy-tls-*.tgz"
+          artifacts: "mercuryworkshop-epoxy-tls*.tgz"
 
   publish:
     name: Publish Epoxy to NPM

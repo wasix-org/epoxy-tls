@@ -76,7 +76,7 @@ const RequestBuilder: Component<{
 	].join("\n");
 	this.body = "";
 
-	const createRequest = ([url, method, headers, body, wispServer]: string[]) => {
+	const createRequest = ([url, method, headers, body, _wispServer]: string[]) => {
 		let realHeaders = headers.trim()
 			.split("\n")
 			.map(x => x.split(": "))
@@ -229,8 +229,8 @@ const RequestSender: Component<{ req: EpoxyRequest, area: string }, {
 					Loading...
 				</div>
 			)}
-			{use(this.response).andThen((response) => <ResponseView response={response} />, null)}
-			{use(this.error).andThen((error) => <div class="error">{error}</div>, null)}
+			{use(this.response).andThen((response: any) => <ResponseView response={response} />, null)}
+			{use(this.error).andThen((error: Error) => <div class="error">{error}</div>, null)}
 		</div>
 	)
 }
