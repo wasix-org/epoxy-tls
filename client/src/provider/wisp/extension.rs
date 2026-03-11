@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use js_sys::Uint8Array;
 use wasm_bindgen::prelude::wasm_bindgen;
-use wisp_mux::{extensions::ProtocolExtensionBuilder, ws::{Payload, TransportRead, TransportWrite}};
+use wisp_mux::ws::{Payload, TransportRead, TransportWrite};
 
 use crate::EpoxyError;
 
@@ -11,7 +11,9 @@ pub struct JsTransportRead {
 }
 impl From<&mut dyn TransportRead> for JsTransportRead {
 	fn from(value: &mut dyn TransportRead) -> Self {
-	    Self { inner: &raw mut *value }
+		Self {
+			inner: &raw mut *value,
+		}
 	}
 }
 #[wasm_bindgen]
@@ -29,7 +31,9 @@ pub struct JsTransportWrite {
 }
 impl From<&mut dyn TransportWrite> for JsTransportWrite {
 	fn from(value: &mut dyn TransportWrite) -> Self {
-	    Self { inner: &raw mut *value }
+		Self {
+			inner: &raw mut *value,
+		}
 	}
 }
 #[wasm_bindgen]

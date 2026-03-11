@@ -3,7 +3,10 @@ use futures::stream::{AbortHandle, Abortable};
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, body::Incoming};
 use tower::{Service, ServiceExt};
-use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast};
+use wasm_bindgen::{
+	JsCast,
+	prelude::{Closure, wasm_bindgen},
+};
 use web_sys::AbortSignal;
 
 use crate::{

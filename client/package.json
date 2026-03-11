@@ -14,7 +14,7 @@
 	],
 	"scripts": {
 		"build": "rollup -c",
-		"format": "prettier -w .",
+		"format": "cargo fmt && prettier -w .",
 		"prepack": "npm run build"
 	},
 	"devDependencies": {

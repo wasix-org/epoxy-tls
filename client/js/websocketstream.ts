@@ -1,4 +1,6 @@
-export interface WebSocketConnection<T extends Uint8Array<ArrayBuffer> | string = Uint8Array<ArrayBuffer> | string> {
+export interface WebSocketConnection<
+	T extends Uint8Array<ArrayBuffer> | string = Uint8Array<ArrayBuffer> | string,
+> {
 	readable: ReadableStream<T>;
 	writable: WritableStream<T>;
 	protocol: string;
@@ -15,7 +17,9 @@ export interface WebSocketStreamOptions {
 	signal?: AbortSignal;
 }
 
-export class WebSocketStream<T extends Uint8Array<ArrayBuffer> | string = Uint8Array<ArrayBuffer> | string> {
+export class WebSocketStream<
+	T extends Uint8Array<ArrayBuffer> | string = Uint8Array<ArrayBuffer> | string,
+> {
 	readonly url: string;
 
 	readonly opened: Promise<WebSocketConnection<T>>;
@@ -26,7 +30,7 @@ export class WebSocketStream<T extends Uint8Array<ArrayBuffer> | string = Uint8A
 
 	constructor(url: string, options: WebSocketStreamOptions = {}) {
 		if (options.signal?.aborted) {
-			throw new DOMException('This operation was aborted', 'AbortError');
+			throw new DOMException("This operation was aborted", "AbortError");
 		}
 
 		this.url = url;
@@ -35,37 +39,49 @@ export class WebSocketStream<T extends Uint8Array<ArrayBuffer> | string = Uint8A
 
 		ws.binaryType = "arraybuffer";
 
-		const closeWithInfo = ({ closeCode: code, reason }: WebSocketCloseInfo = {}) => ws.close(code, reason);
+		const closeWithInfo = ({
+			closeCode: code,
+			reason,
+		}: WebSocketCloseInfo = {}) => ws.close(code, reason);
 
 		this.opened = new Promise((resolve, reject) => {
 			ws.onopen = () => {
 				resolve({
 					readable: new ReadableStream<T>({
 						start(controller) {
-							ws.onmessage = ({ data }) => controller.enqueue((typeof data === "string" ? data : new Uint8Array(data)) as any);
-							ws.onerror = e => controller.error(e);
+							ws.onmessage = ({ data }) =>
+								controller.enqueue(
+									(typeof data === "string"
+										? data
+										: new Uint8Array(data)) as any
+								);
+							ws.onerror = (e) => controller.error(e);
 						},
 						cancel: closeWithInfo,
 					}),
 					writable: new WritableStream<T>({
-						write(chunk) { ws.send(chunk); },
-						abort() { ws.close(); },
+						write(chunk) {
+							ws.send(chunk);
+						},
+						abort() {
+							ws.close();
+						},
 						close: closeWithInfo,
 					}),
 					protocol: ws.protocol,
 					extensions: ws.extensions,
 				});
-				ws.removeEventListener('error', reject);
+				ws.removeEventListener("error", reject);
 			};
-			ws.addEventListener('error', reject);
+			ws.addEventListener("error", reject);
 		});
 
 		this.closed = new Promise<WebSocketCloseInfo>((resolve, reject) => {
 			ws.onclose = ({ code, reason }) => {
 				resolve({ closeCode: code, reason });
-				ws.removeEventListener('error', reject);
+				ws.removeEventListener("error", reject);
 			};
-			ws.addEventListener('error', reject);
+			ws.addEventListener("error", reject);
 		});
 
 		if (options.signal) {

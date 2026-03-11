@@ -87,10 +87,10 @@ impl<T: AsyncWrite> AsyncWrite for SendWrapper<T> {
 	}
 
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-	    self.project().0.poll_flush(cx)
+		self.project().0.poll_flush(cx)
 	}
 
 	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-	    self.project().0.poll_close(cx)
+		self.project().0.poll_close(cx)
 	}
 }

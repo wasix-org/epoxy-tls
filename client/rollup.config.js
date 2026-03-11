@@ -14,7 +14,13 @@ let DEBUG = false;
 let SIZE = false;
 
 async function run(cmd, args, env = {}) {
-	console.log(Object.entries(env).map(([k, v]) => `${k}="${v}"`).join(" ") + " " + [cmd, ...args].join(" "));
+	console.log(
+		Object.entries(env)
+			.map(([k, v]) => `${k}="${v}"`)
+			.join(" ") +
+			" " +
+			[cmd, ...args].join(" ")
+	);
 	let res, rej;
 	const promise = new Promise((a, b) => {
 		res = a;
@@ -57,7 +63,8 @@ async function compileRust(folder, args) {
 		],
 		{
 			...(SIZE ? {} : { CFLAGS: "-O3" }),
-			RUSTFLAGS: "-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none",
+			RUSTFLAGS:
+				"-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none",
 		}
 	);
 
