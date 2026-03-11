@@ -1,6 +1,6 @@
 #![feature(impl_trait_in_assoc_type)]
 
-use std::marker::PhantomData;
+use core::convert::Into;
 
 use futures_rustls::rustls;
 use wasm_bindgen::{JsError, JsValue};
@@ -30,9 +30,9 @@ pub enum EpoxyError {
 	IO(#[from] std::io::Error),
 	#[error("TLS: {0}")]
 	Rustls(#[from] rustls::Error),
-	#[error("HTTP: {0}")]
+	#[error("Hyper client: {0}")]
 	HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
-	#[error("HTTP: {0}")]
+	#[error("Hyper: {0}")]
 	Hyper(#[from] hyper::Error),
 	#[error("HTTP: {0}")]
 	Http(#[from] hyper::http::Error),
@@ -47,9 +47,11 @@ pub enum EpoxyError {
 	#[error("No URL port")]
 	NoUrlPort,
 
+	#[error("Aborted")]
+	Aborted,
+
 	#[error("JS: invalid value: {0}")]
 	InvalidJsValue(String),
-
 	#[error("JsError({0})")]
 	JsError(String),
 }
@@ -60,29 +62,13 @@ impl From<EpoxyError> for JsValue {
 	}
 }
 
-#[link(wasm_import_module = "__wbindgen_placeholder__")]
-unsafe extern "C" {
-	fn __wbindgen_debug_string(ret: *mut [usize; 2], idx: u32) -> ();
-}
-
-struct JsValueInner {
-	idx: u32,
-	_marker: PhantomData<*mut u8>,
-}
-impl JsValueInner {
-	pub fn as_debug_string(&self) -> String {
-		unsafe {
-			let mut ret = [0; 2];
-			__wbindgen_debug_string(&raw mut ret, self.idx);
-			let data = Vec::from_raw_parts(ret[0] as *mut u8, ret[1], ret[1]);
-			String::from_utf8_unchecked(data)
-		}
-	}
+#[wasm_bindgen::prelude::wasm_bindgen(wasm_bindgen = wasm_bindgen, raw_module = "__wbindgen_placeholder__")]
+extern "C" {
+	fn __wbindgen_debug_string(js: &JsValue) -> String;
 }
 
 pub fn jsval_debug(val: impl Into<JsValue>) -> String {
-	let inner = unsafe { std::mem::transmute::<JsValue, JsValueInner>(val.into()) };
-	inner.as_debug_string()
+	__wbindgen_debug_string(&val.into())
 }
 
 trait EpoxyJsErrorExt<T> {

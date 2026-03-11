@@ -5,3 +5,4 @@ await init();
 const client = new EpoxyClient();
 
 await client.fetch();
+console.log("done");

@@ -1,17 +1,17 @@
 use bytes::Bytes;
+use futures::stream::{AbortHandle, Abortable};
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, body::Incoming};
-use js_sys::Function;
 use tower::{Service, ServiceExt};
-use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast};
+use web_sys::AbortSignal;
 
 use crate::{
 	EpoxyError, console_log,
 	provider::{
 		StreamProvider,
 		http::{HyperClient, HyperClientBody, build_hyper_client},
-		js::JsProvider,
-		service::BoxProviderService,
+		service::WasmProvider,
 	},
 };
 
@@ -33,30 +33,35 @@ impl Client {
 	}
 
 	#[wasm_bindgen(constructor)]
-	pub fn new(func: Function) -> Result<Self, EpoxyError> {
-		let backend = BoxProviderService::new(JsProvider::new(func));
-
-		let provider = StreamProvider::new(backend)?.into_service();
+	pub fn new(backend: WasmProvider) -> Result<Self, EpoxyError> {
+		let provider = StreamProvider::new(backend.0)?.into_service();
 
 		Ok(Self {
 			hyper: build_hyper_client(provider),
 		})
 	}
 
-	pub async fn request(&self, url: String) -> Result<(), EpoxyError> {
-		let mut client = self.build_client();
-		client.ready().await?;
+	async fn __request(&self, url: String) -> Result<(), EpoxyError> {
+		let client = self.build_client();
 
 		let request = Request::builder().uri(url);
 
 		let request = request.body(Full::new(Bytes::new()))?;
 
-		let response = client.call(request).await?;
+		let response = client.oneshot(request).await?;
 
 		let body = response.into_body().collect().await?;
 
 		console_log!("resp {}", str::from_utf8(&body.to_bytes()).unwrap());
 
 		Ok(())
+	}
+
+	pub async fn request(&self, url: String, abort: AbortSignal) -> Result<(), EpoxyError> {
+		let (handle, reg) = AbortHandle::new_pair();
+		let closure = Closure::<dyn Fn()>::new(move || handle.abort());
+		abort.set_onabort(Some(closure.as_ref().unchecked_ref()));
+		let ret = Abortable::new(self.__request(url), reg).await;
+		ret.map_err(|_| EpoxyError::Aborted).flatten()
 	}
 }

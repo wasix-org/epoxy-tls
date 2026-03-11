@@ -1,14 +1,13 @@
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use js_sys::{Array, Function, Promise, Uint8Array};
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use wasm_bindgen_futures::JsFuture;
 use wasm_streams::{ReadableStream, WritableStream};
 use wisp_mux::WispError;
 
 use crate::{
-	EpoxyError, EpoxyJsErrorExt, console_log, jsval_debug, send_wrapper::SendWrapper,
-	sink_map::SinkExtMap,
+	jsval_debug, provider::service::{BoxProviderService, WasmProvider, WasmWispProvider}, send_wrapper::SendWrapper, sink_map::SinkExtMap, EpoxyError, EpoxyJsErrorExt
 };
 
 use super::{
@@ -16,15 +15,25 @@ use super::{
 	wisp::WispProviderStream,
 };
 
+#[wasm_bindgen]
 pub struct JsProvider {
 	provider: SendWrapper<Function>,
 }
 
+#[wasm_bindgen]
 impl JsProvider {
-	pub fn new(func: Function) -> Self {
+	fn new(func: Function) -> Self {
 		Self {
 			provider: SendWrapper(func),
 		}
+	}
+
+	pub fn provider_wisp(func: Function) -> WasmWispProvider {
+		WasmWispProvider(BoxProviderService::new(Self::new(func)))
+	}
+
+	pub fn provider(func: Function) -> WasmProvider {
+		WasmProvider(BoxProviderService::new(Self::new(func)))
 	}
 
 	async fn map_result(val: JsValue) -> Result<(ReadableStream, WritableStream), EpoxyError> {
@@ -56,7 +65,6 @@ impl ProviderService<String> for JsProvider {
 						.map_err(|x| x.0)
 						.js_error()?
 						.map(|x| {
-							console_log!("read");
 							Ok(
 								x.map_err(|x| WispError::WsImplError(jsval_debug(x).into()))?
 									.dyn_into::<Uint8Array>()
@@ -76,10 +84,7 @@ impl ProviderService<String> for JsProvider {
 						.try_into_sink()
 						.map_err(|x| x.0)
 						.js_error()?
-						.map(|x: Bytes| {
-							console_log!("write");
-							Ok(Uint8Array::from(&x[..]).into())
-						})
+						.map(|x: Bytes| Ok(Uint8Array::from(&x[..]).into()))
 						.sink_map_err(|x| WispError::WsImplError(format!("{x:?}").into())),
 				)),
 			})

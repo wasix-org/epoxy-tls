@@ -1,5 +1,5 @@
 // @ts-expect-error
-import wbgInit, { Client } from "epoxy/wbg";
+import wbgInit, { Client, JsProvider, WispProvider } from "epoxy/wbg";
 // @ts-expect-error
 import wasm from "epoxy/wasm";
 import { WebSocketStream } from "./websocketstream";
@@ -9,22 +9,20 @@ export class EpoxyClient {
 	client: Client;
 
 	constructor() {
-		this.client = new Client(async (host: string, port: number) => {
-			const stream = new WebSocketStream(`wss://anura.pro/${host}:${port}`);
+		let backend = JsProvider.provider_wisp(async (server: string) => {
+			const stream = new WebSocketStream(server);
 			const { readable, writable } = await stream.opened;
 
-			let transform = new TransformStream({
-				transform(val, controller) {
-					controller.enqueue(new Uint8Array(val));
-				}
-			});
-
-			return [readable.pipeThrough(transform), writable];
+			return [readable, writable];
 		});
+		let wisp = WispProvider.new(backend, "wss://anura.pro/");
+
+		this.client = new Client(wisp);
 	}
 
 	async fetch() {
-		await this.client.request("https://google.com");
+		let abort = new AbortController();
+		this.client.request("https://google.com", abort.signal);
 	}
 }
 

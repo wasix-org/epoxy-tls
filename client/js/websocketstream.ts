@@ -1,4 +1,4 @@
-export interface WebSocketConnection<T extends Uint8Array | string = Uint8Array | string> {
+export interface WebSocketConnection<T extends Uint8Array<ArrayBuffer> | string = Uint8Array<ArrayBuffer> | string> {
 	readable: ReadableStream<T>;
 	writable: WritableStream<T>;
 	protocol: string;
@@ -15,7 +15,7 @@ export interface WebSocketStreamOptions {
 	signal?: AbortSignal;
 }
 
-export class WebSocketStream<T extends Uint8Array | string = Uint8Array | string> {
+export class WebSocketStream<T extends Uint8Array<ArrayBuffer> | string = Uint8Array<ArrayBuffer> | string> {
 	readonly url: string;
 
 	readonly opened: Promise<WebSocketConnection<T>>;
@@ -42,7 +42,7 @@ export class WebSocketStream<T extends Uint8Array | string = Uint8Array | string
 				resolve({
 					readable: new ReadableStream<T>({
 						start(controller) {
-							ws.onmessage = ({ data }) => controller.enqueue(data);
+							ws.onmessage = ({ data }) => controller.enqueue((typeof data === "string" ? data : new Uint8Array(data)) as any);
 							ws.onerror = e => controller.error(e);
 						},
 						cancel: closeWithInfo,

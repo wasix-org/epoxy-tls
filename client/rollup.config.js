@@ -51,15 +51,13 @@ async function compileRust(folder, args) {
 			"--release",
 			"--target",
 			"wasm32-unknown-unknown",
-			"-Z",
-			"build-std=panic_abort,std",
-			"-Z",
-			"build-std-features=panic_immediate_abort,optimize_for_size",
+			"-Zbuild-std=std",
+			"-Zbuild-std-features=optimize_for_size",
 			...args,
 		],
 		{
 			...(SIZE ? {} : { CFLAGS: "-O3" }),
-			RUSTFLAGS: "-Zlocation-detail=none -Zfmt-debug=none -C target-cpu=mvp",
+			RUSTFLAGS: "-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none",
 		}
 	);
 
@@ -81,7 +79,6 @@ async function compileRust(folder, args) {
 		path.join(folder, "epoxy_client_bg.wasm"),
 		"-o",
 		path.join(folder, "epoxy.wasm"),
-		"--signext-lowering",
 		...(DEBUG ? ["-g"] : []),
 		"--converge",
 		"-Oz",
@@ -90,6 +87,8 @@ async function compileRust(folder, args) {
 		"-Oz",
 		"--vacuum",
 		"--dce",
+		"-Oz",
+		"--gufa",
 		"-Oz",
 	]);
 

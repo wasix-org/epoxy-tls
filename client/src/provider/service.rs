@@ -1,5 +1,9 @@
 use std::pin::Pin;
 
+use wasm_bindgen::prelude::wasm_bindgen;
+
+use crate::{provider::{wisp::WispProviderStream, ProviderServiceReq, ProviderUnencryptedStream}, EpoxyError};
+
 pub trait ProviderService<T> {
 	type Response;
 	type Error;
@@ -67,3 +71,8 @@ impl<T, U, E> ProviderService<T> for BoxProviderService<T, U, E> {
 		self.inner.call(request)
 	}
 }
+
+#[wasm_bindgen]
+pub struct WasmWispProvider(#[wasm_bindgen(skip)] pub BoxProviderService<String, WispProviderStream, EpoxyError>);
+#[wasm_bindgen]
+pub struct WasmProvider(#[wasm_bindgen(skip)] pub BoxProviderService<ProviderServiceReq, ProviderUnencryptedStream, EpoxyError>);

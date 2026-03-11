@@ -2,15 +2,22 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::{Sink, Stream, lock::Mutex};
+use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{ClientMux, WispError, WispV2Handshake, packet::StreamType};
 
-use crate::{EpoxyError, send_wrapper::SendWrapper};
+use crate::{
+	EpoxyError,
+	provider::service::{WasmProvider, WasmWispProvider},
+	send_wrapper::SendWrapper,
+};
 
 use super::{
 	ProviderServiceReq, ProviderUnencryptedStream,
 	service::{BoxProviderService, ProviderService},
 };
+
+pub mod extension;
 
 type WispProviderRead = Box<dyn Stream<Item = Result<Bytes, WispError>> + Send + Unpin>;
 type WispProviderWrite = Box<dyn Sink<Bytes, Error = WispError> + Send + Unpin>;
@@ -32,6 +39,17 @@ struct WispProviderInner {
 }
 
 impl WispProviderInner {
+	pub fn new(
+		service: BoxProviderService<String, WispProviderStream, EpoxyError>,
+		server: String,
+	) -> Self {
+		Self {
+			locked: Arc::new(Mutex::new(WispProviderLocked { service, mux: None })),
+			server,
+			v2: Box::new(|| (None, vec![])),
+		}
+	}
+
 	async fn create_mux(&self, guard: &mut WispProviderLocked) -> Result<(), EpoxyError> {
 		let stream = guard.service.call(self.server.clone()).await?;
 		let (v2, extensions) = (self.v2)();
@@ -66,7 +84,17 @@ impl WispProviderInner {
 	}
 }
 
+#[wasm_bindgen]
 pub struct WispProvider(Arc<WispProviderInner>);
+
+#[wasm_bindgen]
+impl WispProvider {
+	pub fn new(provider: WasmWispProvider, server: String) -> WasmProvider {
+		WasmProvider(BoxProviderService::new(Self(Arc::new(
+			WispProviderInner::new(provider.0, server),
+		))))
+	}
+}
 
 impl ProviderService<ProviderServiceReq> for WispProvider {
 	type Response = ProviderUnencryptedStream;
