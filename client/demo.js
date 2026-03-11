@@ -14,9 +14,10 @@ const provider = new WispSocketProvider(
 
 const client = new EpoxyClient(provider);
 
-await client.fetch("https://httpbin.org/post", {
+let ret = await client.fetch("https://httpbin.org/post", {
 	method: "POST",
 	body: JSON.stringify({ a: "b" }),
 	headers: { "Content-Type": "application/json" },
 });
+console.log(await ret.json());
 console.log("done");

@@ -1,5 +1,6 @@
 import { Client, ClientReqBuilder } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
+import { decode } from "./util";
 
 interface NormalizedRequest {
 	uri: string;
@@ -86,7 +87,7 @@ export class EpoxyClient {
 		this.client = new Client(provider.into());
 	}
 
-	async fetch(resource: Request | URL | string, options: RequestInit) {
+	async fetch(resource: Request | URL | string, options: RequestInit): Promise<Response> {
 		let normalized = normalizeRequest(resource, options);
 
 		let request = new ClientReqBuilder();
@@ -104,6 +105,23 @@ export class EpoxyClient {
 		}
 
 		let abort = new AbortController();
-		await this.client.request(request, abort.signal, normalized.body);
+		let ret = await this.client.request(request, abort.signal, normalized.body);
+
+		let [code, codeDesc] = ret.status();
+		let rawRawHeaders = ret.headers();
+		let body = ret.body();
+
+		let rawHeaders = rawRawHeaders.map(x => [x.name(), x.values().map((x) => decode(x))] as const);
+		let headers = new Headers();
+		for (let [k, vs] of rawHeaders) {
+			for (let v of vs) {
+				headers.append(k, v);
+			}
+		}
+
+		let res = new Response(body, { status: code, statusText: codeDesc, headers, });
+		(res as any).rawHeaders = rawHeaders;
+
+		return res;
 	}
 }

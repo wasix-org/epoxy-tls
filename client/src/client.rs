@@ -1,7 +1,11 @@
-use futures::stream::{AbortHandle, Abortable};
-use http::{HeaderName, HeaderValue, Method, Uri, request};
+use futures::{
+	TryStreamExt,
+	stream::{AbortHandle, Abortable},
+};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, request};
 use http_body_util::BodyExt;
 use hyper::{Request, Response, body::Incoming};
+use js_sys::{Array, Uint8Array};
 use tower::{Service, ServiceExt};
 use wasm_bindgen::{
 	JsCast,
@@ -19,6 +23,73 @@ use crate::{
 		service::WasmProvider,
 	},
 };
+
+#[wasm_bindgen]
+pub struct Header {
+	name: String,
+	values: Vec<Uint8Array>,
+}
+#[wasm_bindgen]
+impl Header {
+	pub fn name(&mut self) -> String {
+		std::mem::replace(&mut self.name, String::new())
+	}
+
+	pub fn values(&mut self) -> Vec<Uint8Array> {
+		std::mem::replace(&mut self.values, Vec::new())
+	}
+}
+
+#[wasm_bindgen]
+pub struct ClientResponse {
+	status: Option<StatusCode>,
+	headers: Option<HeaderMap>,
+	body: Option<Incoming>,
+}
+#[wasm_bindgen]
+impl ClientResponse {
+	pub fn status(&mut self) -> Array {
+		let status = self.status.take().unwrap();
+		Array::of2(&status.as_u16().into(), &status.as_str().into())
+	}
+
+	pub fn headers(&mut self) -> Vec<Header> {
+		let mut headers = self.headers.take().unwrap();
+		let mut out = Vec::with_capacity(headers.keys_len());
+
+		let mut last_name = None;
+		let mut values = vec![];
+		for (name, value) in headers.drain() {
+			if last_name.is_none()
+				&& let Some(_name) = name
+			{
+				last_name = Some(_name);
+			} else if let Some(_name) = name
+				&& let Some(_last_name) = last_name
+			{
+				out.push(Header {
+					name: _last_name.to_string(),
+					values: std::mem::replace(&mut values, vec![]),
+				});
+				last_name = Some(_name);
+			}
+			values.push(Uint8Array::new_from_slice(value.as_bytes()));
+		}
+
+		out
+	}
+
+	pub fn body(&mut self) -> web_sys::ReadableStream {
+		let body = self.body.take().unwrap();
+
+		wasm_streams::ReadableStream::from_stream(
+			body.into_data_stream()
+				.map_ok(|x| Uint8Array::new_from_slice(&x).into())
+				.map_err(|x| EpoxyError::from(x).into()),
+		)
+		.into_raw()
+	}
+}
 
 #[wasm_bindgen]
 pub struct ClientReqBuilder(Option<request::Builder>);
@@ -82,7 +153,7 @@ impl Client {
 		&self,
 		builder: ClientReqBuilder,
 		body: Option<web_sys::ReadableStream>,
-	) -> Result<(), EpoxyError> {
+	) -> Result<ClientResponse, EpoxyError> {
 		let client = self.build_client();
 
 		let body = build_hyper_body(
@@ -92,12 +163,15 @@ impl Client {
 		let request = builder.0.unwrap().body(body)?;
 
 		let response = client.oneshot(request).await?;
+		let (parts, body) = response.into_parts();
 
-		let body = response.into_body().collect().await?;
+		let res = ClientResponse {
+			status: Some(parts.status),
+			headers: Some(parts.headers),
+			body: Some(body),
+		};
 
-		console_log!("resp {}", str::from_utf8(&body.to_bytes()).unwrap());
-
-		Ok(())
+		Ok(res)
 	}
 
 	pub async fn request(
@@ -105,7 +179,7 @@ impl Client {
 		builder: ClientReqBuilder,
 		abort: AbortSignal,
 		body: Option<web_sys::ReadableStream>,
-	) -> Result<(), EpoxyError> {
+	) -> Result<ClientResponse, EpoxyError> {
 		let (handle, reg) = AbortHandle::new_pair();
 		let closure = Closure::<dyn Fn()>::new(move || handle.abort());
 		abort.set_onabort(Some(closure.as_ref().unchecked_ref()));
