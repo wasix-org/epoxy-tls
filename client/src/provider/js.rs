@@ -7,7 +7,7 @@ use wasm_streams::{ReadableStream, WritableStream};
 use wisp_mux::WispError;
 
 use crate::{
-	EpoxyError, EpoxyJsErrorExt, jsval_debug,
+	EpoxyError, EpoxyJsValErrorExt, jsval_debug,
 	provider::service::{BoxProviderService, WasmProvider, WasmWispProvider},
 	send_wrapper::SendWrapper,
 	sink_map::SinkExtMap,

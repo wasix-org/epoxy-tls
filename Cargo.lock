@@ -630,6 +630,8 @@ dependencies = [
  "bytes",
  "futures",
  "futures-rustls",
+ "http",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util-wasm",

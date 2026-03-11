@@ -45,6 +45,7 @@ async function run(cmd, args, env = {}) {
 	});
 
 	await promise;
+	spawned.kill();
 }
 
 async function compileRust(folder, args) {

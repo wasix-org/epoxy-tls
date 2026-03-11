@@ -1,6 +1,6 @@
-use bytes::Bytes;
 use futures::stream::{AbortHandle, Abortable};
-use http_body_util::{BodyExt, Full};
+use http::{HeaderName, HeaderValue, Method, Uri, request};
+use http_body_util::BodyExt;
 use hyper::{Request, Response, body::Incoming};
 use tower::{Service, ServiceExt};
 use wasm_bindgen::{
@@ -13,10 +13,44 @@ use crate::{
 	EpoxyError, console_log,
 	provider::{
 		StreamProvider,
-		http::{HyperClient, HyperClientBody, build_hyper_client},
+		http::{
+			EpoxyFrameStream, HyperClient, HyperClientBody, build_hyper_body, build_hyper_client,
+		},
 		service::WasmProvider,
 	},
 };
+
+#[wasm_bindgen]
+pub struct ClientReqBuilder(Option<request::Builder>);
+#[wasm_bindgen]
+impl ClientReqBuilder {
+	#[wasm_bindgen(constructor)]
+	pub fn new() -> Self {
+		Self(Some(request::Request::builder()))
+	}
+
+	fn modify(
+		&mut self,
+		func: impl FnOnce(request::Builder) -> Result<request::Builder, EpoxyError>,
+	) -> Result<(), EpoxyError> {
+		let take = self.0.take();
+		self.0.replace(func(take.unwrap())?);
+
+		Ok(())
+	}
+
+	pub fn method(&mut self, method: &str) -> Result<(), EpoxyError> {
+		self.modify(|x| Ok(x.method(Method::try_from(method)?)))
+	}
+
+	pub fn uri(&mut self, uri: String) -> Result<(), EpoxyError> {
+		self.modify(|x| Ok(x.uri(Uri::try_from(uri)?)))
+	}
+
+	pub fn header(&mut self, key: String, val: String) -> Result<(), EpoxyError> {
+		self.modify(|x| Ok(x.header(HeaderName::try_from(key)?, HeaderValue::try_from(val)?)))
+	}
+}
 
 #[wasm_bindgen]
 pub struct Client {
@@ -44,12 +78,18 @@ impl Client {
 		})
 	}
 
-	async fn __request(&self, url: String) -> Result<(), EpoxyError> {
+	async fn __request(
+		&self,
+		builder: ClientReqBuilder,
+		body: Option<web_sys::ReadableStream>,
+	) -> Result<(), EpoxyError> {
 		let client = self.build_client();
 
-		let request = Request::builder().uri(url);
-
-		let request = request.body(Full::new(Bytes::new()))?;
+		let body = build_hyper_body(
+			body.map(|x| EpoxyFrameStream::new(wasm_streams::ReadableStream::from_raw(x)))
+				.transpose()?,
+		);
+		let request = builder.0.unwrap().body(body)?;
 
 		let response = client.oneshot(request).await?;
 
@@ -60,11 +100,18 @@ impl Client {
 		Ok(())
 	}
 
-	pub async fn request(&self, url: String, abort: AbortSignal) -> Result<(), EpoxyError> {
+	pub async fn request(
+		&self,
+		builder: ClientReqBuilder,
+		abort: AbortSignal,
+		body: Option<web_sys::ReadableStream>,
+	) -> Result<(), EpoxyError> {
 		let (handle, reg) = AbortHandle::new_pair();
 		let closure = Closure::<dyn Fn()>::new(move || handle.abort());
 		abort.set_onabort(Some(closure.as_ref().unchecked_ref()));
-		let ret = Abortable::new(self.__request(url), reg).await;
+
+		let ret = Abortable::new(self.__request(builder, body), reg).await;
+
 		ret.map_err(|_| EpoxyError::Aborted).flatten()
 	}
 }

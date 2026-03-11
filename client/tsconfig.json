@@ -1,11 +1,16 @@
 {
 	"compilerOptions": {
-		"lib": ["ES2022", "dom"],
+		"lib": ["ES2022", "dom", "dom.iterable", "esnext.disposable"],
 		"target": "ES2022",
 		"declaration": true,
 		"declarationDir": "dist/types",
 		"rootDir": "js",
 		"moduleResolution": "bundler",
+		"baseUrl": ".",
+		"paths": {
+			"epoxy/wbg": ["build/full/epoxy_client"],
+			"epoxy/wasm": ["epoxy_wasm"]
+		},
 		"stripInternal": true
 	},
 	"include": ["js"],

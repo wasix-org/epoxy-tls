@@ -37,6 +37,14 @@ pub enum EpoxyError {
 	#[error("HTTP: {0}")]
 	Http(#[from] hyper::http::Error),
 
+	#[error("{0}")]
+	InvalidMethod(#[from] http::method::InvalidMethod),
+	#[error("{0}")]
+	InvalidUri(#[from] http::uri::InvalidUri),
+	#[error("{0}")]
+	InvalidHeaderName(#[from] http::header::InvalidHeaderName),
+	#[error("{0}")]
+	InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
 	#[error("Invalid DNS name: {0}")]
 	InvalidDnsName(String),
 	#[error("Invalid URL scheme: {0:?}")]
@@ -55,6 +63,11 @@ pub enum EpoxyError {
 	#[error("JsError({0})")]
 	JsError(String),
 }
+impl EpoxyError {
+	pub fn js_error(val: impl Into<JsValue>) -> Self {
+		EpoxyError::JsError(jsval_debug(val))
+	}
+}
 
 impl From<EpoxyError> for JsValue {
 	fn from(value: EpoxyError) -> Self {
@@ -71,13 +84,13 @@ pub fn jsval_debug(val: impl Into<JsValue>) -> String {
 	__wbindgen_debug_string(&val.into())
 }
 
-trait EpoxyJsErrorExt<T> {
+trait EpoxyJsValErrorExt<T> {
 	fn js_invalid(self) -> Result<T, EpoxyError>;
 	fn js_error(self) -> Result<T, EpoxyError>;
 }
-impl<T, E: Into<JsValue>> EpoxyJsErrorExt<T> for Result<T, E> {
+impl<T, E: Into<JsValue>> EpoxyJsValErrorExt<T> for Result<T, E> {
 	fn js_error(self) -> Result<T, EpoxyError> {
-		self.map_err(|x| EpoxyError::JsError(jsval_debug(x)))
+		self.map_err(|x| EpoxyError::js_error(x))
 	}
 
 	fn js_invalid(self) -> Result<T, EpoxyError> {
