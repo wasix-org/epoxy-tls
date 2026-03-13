@@ -41,7 +41,10 @@ export abstract class JsProtocolExtension {
 			try {
 				return this.encode();
 			} catch (err) {
-				console.warn("[epoxy] encode failed! this will crash the wasm module", err);
+				console.warn(
+					"[epoxy] encode failed! this will crash the wasm module",
+					err
+				);
 				throw err;
 			}
 		};
@@ -75,13 +78,13 @@ export abstract class JsProtocolExtension {
 	handleHandshake(
 		read: TransportRead,
 		write: TransportWrite
-	): Promise<void> | void { }
+	): Promise<void> | void {}
 	handlePacket(
 		type: number,
 		packet: Uint8Array,
 		read: TransportRead,
 		write: TransportWrite
-	): Promise<void> | void { }
+	): Promise<void> | void {}
 }
 
 export abstract class JsProtocolExtensionBuilder {
@@ -104,7 +107,12 @@ export abstract class JsProtocolExtensionBuilder {
 			return ext.inner;
 		};
 
-		this.inner = new EpxJsExtBuilder(id, buildFromBytes, buildToExtension, this);
+		this.inner = new EpxJsExtBuilder(
+			id,
+			buildFromBytes,
+			buildToExtension,
+			this
+		);
 	}
 
 	abstract buildFromBytes(bytes: Uint8Array, role: Role): JsProtocolExtension;

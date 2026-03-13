@@ -1,4 +1,4 @@
-import { Client, ClientReqBuilder } from "epoxy/wbg";
+import { Client, ClientReqBuilder, JsSocket } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
 import { decode } from "./util";
 
@@ -132,5 +132,34 @@ export class EpoxyClient {
 		(res as any).rawHeaders = rawHeaders;
 
 		return res;
+	}
+
+	async connect(host: string, port: number, bufferSize: number = 16384): Promise<TcpStream> {
+		return new TcpStream(await this.client.connect(host, port, bufferSize));
+	}
+	async connectTls(host: string, port: number, bufferSize: number = 16384): Promise<TlsStream> {
+		return new TlsStream(await this.client.connect_tls(host, port, bufferSize));
+	}
+}
+
+export class TcpStream {
+	read: ReadableStream<Uint8Array>;
+	write: WritableStream<Uint8Array>;
+
+	// @internal
+	constructor(inner: JsSocket) {
+		this.read = inner[0];
+		this.write = inner[1];
+	}
+}
+
+export class TlsStream {
+	read: ReadableStream<Uint8Array>;
+	write: WritableStream<Uint8Array>;
+
+	// @internal
+	constructor(inner: JsSocket) {
+		this.read = inner[0];
+		this.write = inner[1];
 	}
 }

@@ -49,8 +49,8 @@ pub struct JsProtocolExtensionBuilder {
 	from_bytes: Function,
 	to_extension: Function,
 
-    #[wasm_bindgen(skip)]
-    pub js_host: JsValue,
+	#[wasm_bindgen(skip)]
+	pub js_host: JsValue,
 }
 #[wasm_bindgen]
 impl JsProtocolExtensionBuilder {
@@ -60,7 +60,7 @@ impl JsProtocolExtensionBuilder {
 			id,
 			from_bytes,
 			to_extension,
-            js_host: host,
+			js_host: host,
 		}
 	}
 }
@@ -103,8 +103,8 @@ pub struct JsProtocolExtension {
 	handshake: Function,
 	packet: Function,
 
-    #[wasm_bindgen(skip)]
-    pub js_host: JsValue,
+	#[wasm_bindgen(skip)]
+	pub js_host: JsValue,
 }
 #[wasm_bindgen]
 impl JsProtocolExtension {
@@ -116,7 +116,7 @@ impl JsProtocolExtension {
 		encode: Function,
 		handshake: Function,
 		packet: Function,
-        host: JsValue,
+		host: JsValue,
 	) -> Self {
 		Self {
 			id,
@@ -125,7 +125,7 @@ impl JsProtocolExtension {
 			encode,
 			handshake,
 			packet,
-            js_host: host,
+			js_host: host,
 		}
 	}
 }

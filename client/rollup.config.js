@@ -1,7 +1,7 @@
 import { defineConfig } from "rollup";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, exec as processExec } from "node:child_process";
 import process from "node:process";
 
 import terser from "@rollup/plugin-terser";
@@ -10,6 +10,7 @@ import dts from "rollup-plugin-dts";
 import nodeResolve from "@rollup/plugin-node-resolve";
 import wasm from "@rollup/plugin-wasm";
 
+let VERSION;
 let DEBUG = false;
 let SIZE = false;
 let FAKED_TYPES = [
@@ -70,7 +71,9 @@ async function compileRust(folder, args) {
 		],
 		{
 			...(SIZE ? {} : { CFLAGS: "-O3" }),
-			RUSTFLAGS:"-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none",
+			RUSTFLAGS:
+				"-Zunstable-options -Cpanic=immediate-abort" +
+				(DEBUG ? "" : " -Zlocation-detail=none -Zfmt-debug=none"),
 		}
 	);
 
@@ -124,6 +127,19 @@ function rust(folderName, args = []) {
 		},
 	};
 }
+
+const versionInfo = {
+	name: "epx-version",
+	resolveId(source) {
+		if (source === "epoxy/version") return "\0epoxy/version";
+		return null;
+	},
+	load(source) {
+		if (source === "\0epoxy/version")
+			return `export default ${JSON.stringify(VERSION)}`;
+		return null;
+	},
+};
 
 const rustFallback = {
 	name: "rust-fallback",
@@ -182,7 +198,7 @@ const cfg = (inputDir, inputFile, output, defs, plugins) => {
 		defineConfig({
 			input,
 			output: [{ file: output, sourcemap: true, format: "es" }],
-			plugins: [common(inputDir), ...plugins, rustFallback],
+			plugins: [common(inputDir), ...plugins, versionInfo, rustFallback],
 		}),
 	];
 	if (defs) {
@@ -191,16 +207,27 @@ const cfg = (inputDir, inputFile, output, defs, plugins) => {
 				input:
 					"dist/types/" + input.substring("js/".length).replace(".ts", ".d.ts"),
 				output: [{ file: output.replace(".js", ".d.ts"), format: "es" }],
-				plugins: [dts(), rustFallback],
+				plugins: [dts(), versionInfo, rustFallback],
 			})
 		);
 	}
 	return out;
 };
 
-export default (args) => {
+export default async (args) => {
 	if (args["config-debug"]) DEBUG = true;
 	if (args["config-size"]) SIZE = true;
+
+	let git = await new Promise((res, rej) => {
+		processExec("git describe --always --dirty", (err, stdout) => {
+			if (err) rej(err);
+			else if (stdout) res(stdout.trim());
+		});
+	});
+
+	let version = JSON.parse(await fs.readFile("package.json", "utf8")).version;
+
+	VERSION = { version, git };
 
 	return defineConfig([
 		...cfg("js", "index.ts", "dist/epoxy.js", true, [rust("full")]),

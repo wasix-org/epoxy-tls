@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use futures::{
-	TryStreamExt,
+	AsyncReadExt, TryStreamExt,
 	stream::{AbortHandle, Abortable},
 };
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, request};
@@ -15,8 +17,9 @@ use web_sys::AbortSignal;
 
 use crate::{
 	EpoxyError,
+	js_socket::{JsSocket, create_asyncread_js_socket},
 	provider::{
-		StreamProvider,
+		StreamProvider, StreamProviderService,
 		http::{
 			EpoxyFrameStream, HyperClient, HyperClientBody, build_hyper_body, build_hyper_client,
 		},
@@ -125,6 +128,7 @@ impl ClientReqBuilder {
 
 #[wasm_bindgen]
 pub struct Client {
+	provider: Arc<StreamProvider>,
 	hyper: HyperClient,
 }
 
@@ -142,10 +146,11 @@ impl Client {
 
 	#[wasm_bindgen(constructor)]
 	pub fn new(backend: WasmProvider) -> Result<Self, EpoxyError> {
-		let provider = StreamProvider::new(backend.0)?.into_service();
+		let provider = Arc::new(StreamProvider::new(backend.0)?);
 
 		Ok(Self {
-			hyper: build_hyper_client(provider),
+			hyper: build_hyper_client(StreamProviderService(provider.clone())),
+			provider,
 		})
 	}
 
@@ -187,5 +192,32 @@ impl Client {
 		let ret = Abortable::new(self.__request(builder, body), reg).await;
 
 		ret.map_err(|_| EpoxyError::Aborted).flatten()
+	}
+
+	pub async fn connect(
+		&self,
+		host: String,
+		port: u16,
+		buffer_size: usize,
+	) -> Result<JsSocket, EpoxyError> {
+		self.provider
+			.get_stream(host, port)
+			.await
+			.map(|x| create_asyncread_js_socket(x.read, buffer_size, x.write))
+	}
+
+	pub async fn connect_tls(
+		&self,
+		host: String,
+		port: u16,
+		buffer_size: usize,
+	) -> Result<JsSocket, EpoxyError> {
+		self.provider
+			.get_tls_stream(host, port, false)
+			.await
+			.map(|x| {
+				let (rx, tx) = x.stream.split();
+				create_asyncread_js_socket(rx, buffer_size, tx)
+			})
 	}
 }

@@ -9,6 +9,7 @@ use wisp_mux::WispError;
 mod client;
 mod provider;
 
+mod js_socket;
 mod log;
 mod send_wrapper;
 mod sink_map;

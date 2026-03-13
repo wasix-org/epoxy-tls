@@ -1,5 +1,7 @@
 import wbgInit from "epoxy/wbg";
 import wasm from "epoxy/wasm";
+// @ts-ignore
+import epxVersion from "epoxy/version";
 
 export async function init() {
 	await wbgInit({ module_or_path: await wasm() });
@@ -18,3 +20,4 @@ export {
 	JsProtocolExtension,
 } from "./wispExtension";
 export { EpoxyClient } from "./client";
+export let version = { package: epxVersion.version, git: epxVersion.git };

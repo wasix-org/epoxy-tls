@@ -33,7 +33,7 @@ pub struct ProviderServiceReq {
 #[pin_project]
 pub struct ProviderEncryptedStream {
 	#[pin]
-	stream: TlsStream<ProviderUnencryptedStream>,
+	pub stream: TlsStream<ProviderUnencryptedStream>,
 	h2_negotiated: bool,
 }
 impl AsyncRead for ProviderEncryptedStream {
@@ -193,10 +193,6 @@ impl StreamProvider {
 			stream: encrypted,
 		})
 	}
-
-	pub fn into_service(self) -> StreamProviderService {
-		StreamProviderService(Arc::new(self))
-	}
 }
 
 #[pin_project]
@@ -275,7 +271,7 @@ impl Connection for HttpIo {
 }
 
 #[derive(Clone)]
-pub struct StreamProviderService(Arc<StreamProvider>);
+pub struct StreamProviderService(pub Arc<StreamProvider>);
 
 impl Service<Uri> for StreamProviderService {
 	type Response = HttpIo;

@@ -7,11 +7,7 @@ use wisp_mux::{
 };
 
 use crate::{
-	EpoxyError,
-	provider::wisp::js_extension::{
-		JsProtocolExtension,
-	},
-	send_wrapper::SendWrapper,
+	EpoxyError, provider::wisp::js_extension::JsProtocolExtension, send_wrapper::SendWrapper,
 };
 
 use super::js_extension::JsProtocolExtensionBuilder;
