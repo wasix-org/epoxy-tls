@@ -1,14 +1,21 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use futures::{Sink, Stream, lock::Mutex};
-use wasm_bindgen::prelude::wasm_bindgen;
+use futures::{
+	Sink, Stream,
+	lock::{Mutex, OwnedMutexGuard},
+};
+use js_sys::{Array, Function, Uint8Array};
+use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use wasm_bindgen_futures::spawn_local;
-use wisp_mux::{ClientMux, WispError, WispV2Handshake, packet::StreamType};
+use wisp_mux::{ClientMux, WispError, packet::StreamType};
 
 use crate::{
 	EpoxyError,
-	provider::service::{WasmProvider, WasmWispProvider},
+	provider::{
+		service::{WasmProvider, WasmWispProvider},
+		wisp::extension::{JsWispV2Handshake, extension_to_jsval, to_wisp_v2_handshake},
+	},
 	send_wrapper::SendWrapper,
 };
 
@@ -18,6 +25,7 @@ use super::{
 };
 
 pub mod extension;
+pub mod js_extension;
 
 type WispProviderRead = Box<dyn Stream<Item = Result<Bytes, WispError>> + Send + Unpin>;
 type WispProviderWrite = Box<dyn Sink<Bytes, Error = WispError> + Send + Unpin>;
@@ -31,29 +39,62 @@ struct WispProviderLocked {
 	mux: Option<ClientMux<WispProviderWrite>>,
 }
 
+type V2Func = Box<dyn Fn() -> (Option<JsWispV2Handshake>, Vec<u8>)>;
 struct WispProviderInner {
 	locked: Arc<Mutex<WispProviderLocked>>,
 
 	server: String,
-	v2: Box<dyn Fn() -> (Option<WispV2Handshake>, Vec<u8>) + Sync + Send>,
+	v2: SendWrapper<V2Func>,
 }
 
 impl WispProviderInner {
 	pub fn new(
 		service: BoxProviderService<String, WispProviderStream, EpoxyError>,
 		server: String,
+		v2: Option<Function>,
 	) -> Self {
+		let v2 = match v2 {
+			Some(func) => Box::new(move || {
+				let ret = func
+					.call0(&JsValue::NULL)
+					.unwrap()
+					.unchecked_into::<Array>();
+
+				let v2 = ret.get(0);
+				let v2 = if v2.is_null_or_undefined() {
+					None
+				} else {
+					Some(to_wisp_v2_handshake(v2))
+				};
+
+				(v2, ret.get(1).unchecked_into::<Uint8Array>().to_vec())
+			}) as V2Func,
+			None => Box::new(|| (None, vec![])) as V2Func,
+		};
 		Self {
 			locked: Arc::new(Mutex::new(WispProviderLocked { service, mux: None })),
 			server,
-			v2: Box::new(|| (None, vec![])),
+			v2: SendWrapper(v2),
+		}
+	}
+
+	pub async fn replace_mux(&self) -> Result<(), EpoxyError> {
+		self.create_mux(&mut *self.locked.lock().await).await
+	}
+
+	pub async fn get_extensions(&self) -> Option<WispProtocolExtensions> {
+		let locked = self.locked.clone().lock_owned().await;
+		if locked.mux.is_some() {
+			Some(WispProtocolExtensions(locked))
+		} else {
+			None
 		}
 	}
 
 	async fn create_mux(&self, guard: &mut WispProviderLocked) -> Result<(), EpoxyError> {
 		let stream = guard.service.call(self.server.clone()).await?;
-		let (v2, extensions) = (self.v2)();
-		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2)
+		let (v2, extensions) = (self.v2.0)();
+		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2.map(|x| x.0))
 			.await?
 			.with_required_extensions(&extensions)
 			.await?;
@@ -68,7 +109,7 @@ impl WispProviderInner {
 	}
 
 	async fn call(&self, req: ProviderServiceReq) -> Result<ProviderUnencryptedStream, EpoxyError> {
-		let mut guard = self.locked.clone().lock_owned().await;
+		let mut guard = self.locked.lock().await;
 		if guard.mux.is_none() {
 			self.create_mux(&mut guard).await?;
 		}
@@ -85,14 +126,44 @@ impl WispProviderInner {
 }
 
 #[wasm_bindgen]
+pub struct WispProtocolExtensions(OwnedMutexGuard<WispProviderLocked>);
+#[wasm_bindgen]
+impl WispProtocolExtensions {
+	pub fn arr(&mut self) -> Array {
+		let arr = Array::new();
+		for ext in self.0.mux.as_mut().unwrap().get_extensions_mut() {
+			arr.push(&extension_to_jsval(ext));
+		}
+		return arr;
+	}
+}
+
+#[wasm_bindgen]
+#[derive(Clone)]
 pub struct WispProvider(Arc<WispProviderInner>);
 
 #[wasm_bindgen]
 impl WispProvider {
-	pub fn new(provider: WasmWispProvider, server: String) -> WasmProvider {
-		WasmProvider(BoxProviderService::new(Self(Arc::new(
-			WispProviderInner::new(provider.0, server),
-		))))
+	pub fn new(provider: WasmWispProvider, server: String, wisp_v2: Option<Function>) -> Self {
+		Self(Arc::new(WispProviderInner::new(
+			provider.0, server, wisp_v2,
+		)))
+	}
+
+	pub fn r#box(self) -> WasmProvider {
+		WasmProvider(BoxProviderService::new(self))
+	}
+
+	pub async fn replace_mux(&self) -> Result<(), EpoxyError> {
+		self.0.replace_mux().await
+	}
+
+	pub async fn get_extensions(&self) -> Option<WispProtocolExtensions> {
+		self.0.get_extensions().await
+	}
+
+	pub fn dup(&self) -> Self {
+		self.clone()
 	}
 }
 

@@ -13,14 +13,13 @@ mod log;
 mod send_wrapper;
 mod sink_map;
 
-/*
+#[cfg(feature = "debug")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 fn main() {
 	std::panic::set_hook(Box::new(|info| {
 		console_log!("{}", info);
 	}));
 }
-*/
 
 #[derive(thiserror::Error, Debug)]
 pub enum EpoxyError {

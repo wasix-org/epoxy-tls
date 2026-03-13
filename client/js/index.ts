@@ -13,4 +13,8 @@ export {
 	WispSocketProvider,
 	ProviderResult,
 } from "./provider";
+export {
+	JsProtocolExtensionBuilder,
+	JsProtocolExtension,
+} from "./wispExtension";
 export { EpoxyClient } from "./client";

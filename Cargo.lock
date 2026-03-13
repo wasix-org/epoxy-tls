@@ -627,6 +627,7 @@ dependencies = [
 name = "epoxy-client"
 version = "3.0.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "futures",
  "futures-rustls",

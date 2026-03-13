@@ -12,6 +12,12 @@ import wasm from "@rollup/plugin-wasm";
 
 let DEBUG = false;
 let SIZE = false;
+let FAKED_TYPES = [
+	"JsProvider",
+	"WispProvider",
+	"WasmProvider",
+	"WasmWispProvider",
+];
 
 async function run(cmd, args, env = {}) {
 	console.log(
@@ -64,8 +70,7 @@ async function compileRust(folder, args) {
 		],
 		{
 			...(SIZE ? {} : { CFLAGS: "-O3" }),
-			RUSTFLAGS:
-				"-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none",
+			RUSTFLAGS:"-Zunstable-options -Cpanic=immediate-abort -Zlocation-detail=none -Zfmt-debug=none",
 		}
 	);
 
@@ -109,10 +114,10 @@ function rust(folderName, args = []) {
 	const folder = path.join(import.meta.dirname, "build", folderName);
 	return {
 		name: "rust",
-		buildStart: async () => {
+		async buildStart() {
 			await compileRust(folder, args);
 		},
-		resolveId: (source) => {
+		resolveId(source) {
 			if (source === "epoxy/wbg") return path.join(folder, "epoxy_client.js");
 			if (source === "epoxy/wasm") return path.join(folder, "epoxy.wasm");
 			return null;
@@ -122,9 +127,19 @@ function rust(folderName, args = []) {
 
 const rustFallback = {
 	name: "rust-fallback",
-	resolveId: (source) => {
+	resolveId(source) {
+		if (source === "epoxy/wbg") return "\0epoxy/wbg";
 		if (source.startsWith("epoxy/"))
 			throw new Error(`${source} should not be leaking`);
+		return null;
+	},
+	load(id) {
+		if (id === "\0epoxy/wbg") {
+			return [
+				"export default async function wbgInit() {}",
+				...FAKED_TYPES.map((x) => `export class ${x} {}`),
+			].join("\n");
+		}
 		return null;
 	},
 };

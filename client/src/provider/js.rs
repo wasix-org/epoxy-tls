@@ -25,18 +25,19 @@ pub struct JsProvider {
 
 #[wasm_bindgen]
 impl JsProvider {
-	fn new(func: Function) -> Self {
+	#[wasm_bindgen(constructor)]
+	pub fn new(func: Function) -> Self {
 		Self {
 			provider: SendWrapper(func),
 		}
 	}
 
-	pub fn provider_wisp(func: Function) -> WasmWispProvider {
-		WasmWispProvider(BoxProviderService::new(Self::new(func)))
+	pub fn box_wisp(self) -> WasmWispProvider {
+		WasmWispProvider(BoxProviderService::new(self))
 	}
 
-	pub fn provider(func: Function) -> WasmProvider {
-		WasmProvider(BoxProviderService::new(Self::new(func)))
+	pub fn r#box(self) -> WasmProvider {
+		WasmProvider(BoxProviderService::new(self))
 	}
 
 	async fn map_result(val: JsValue) -> Result<(ReadableStream, WritableStream), EpoxyError> {

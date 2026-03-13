@@ -84,10 +84,13 @@ export class EpoxyClient {
 	client: Client;
 
 	constructor(provider: SocketProvider) {
-		this.client = new Client(provider.into());
+		this.client = new Client(provider.provider);
 	}
 
-	async fetch(resource: Request | URL | string, options: RequestInit): Promise<Response> {
+	async fetch(
+		resource: Request | URL | string,
+		options: RequestInit
+	): Promise<Response> {
 		let normalized = normalizeRequest(resource, options);
 
 		let request = new ClientReqBuilder();
@@ -111,7 +114,9 @@ export class EpoxyClient {
 		let rawRawHeaders = ret.headers();
 		let body = ret.body();
 
-		let rawHeaders = rawRawHeaders.map(x => [x.name(), x.values().map((x) => decode(x))] as const);
+		let rawHeaders = rawRawHeaders.map(
+			(x) => [x.name(), x.values().map((x) => decode(x))] as const
+		);
 		let headers = new Headers();
 		for (let [k, vs] of rawHeaders) {
 			for (let v of vs) {
@@ -119,7 +124,11 @@ export class EpoxyClient {
 			}
 		}
 
-		let res = new Response(body, { status: code, statusText: codeDesc, headers, });
+		let res = new Response(body, {
+			status: code,
+			statusText: codeDesc,
+			headers,
+		});
 		(res as any).rawHeaders = rawHeaders;
 
 		return res;

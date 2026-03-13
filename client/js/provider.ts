@@ -1,26 +1,57 @@
 import {
 	JsProvider as EpxJsProvider,
 	WispProvider as EpxWispProvider,
+	JsWispV2Handshake,
+	ProtocolExtensionBuilders,
 	WasmProvider,
 	WasmWispProvider,
 } from "epoxy/wbg";
 import { WebSocketStream } from "./websocketstream";
+import { JsProtocolExtensionBuilder, WispExtensions } from "./wispExtension";
 
 export type ProviderResult = [
 	readable: ReadableStream<Uint8Array<ArrayBuffer>>,
 	writable: WritableStream<Uint8Array<ArrayBuffer>>,
 ];
 
-export class JsProvider {
-	func: (host: string) => Promise<ProviderResult> | ProviderResult;
+abstract class Provider<T, P> {
+	// @internal
+	_provider: T;
+	// @internal
+	_map: (provider: T) => P;
+	// @internal
+	used: boolean = false;
 
-	constructor(func: typeof this.func) {
-		this.func = func;
+	constructor(provider: T, map: (provider: T) => P) {
+		this._provider = provider;
+		this._map = map;
 	}
 
 	// @internal
-	into(): WasmWispProvider {
-		return EpxJsProvider.provider_wisp(async (host) => await this.func(host));
+	clone(): T | undefined {
+		return undefined;
+	}
+
+	// @internal
+	get provider(): P {
+		let cloned = this.clone();
+		if (!cloned) {
+			if (this.used) throw new Error("Provider already used");
+			this.used = true;
+			cloned = this._provider;
+		}
+
+		return this._map(cloned);
+	}
+}
+
+export class JsProvider extends Provider<EpxJsProvider, WasmWispProvider> {
+	constructor(
+		func: (host: string) => Promise<ProviderResult> | ProviderResult
+	) {
+		super(new EpxJsProvider(async (host) => await func(host)), (x) =>
+			x.box_wisp()
+		);
 	}
 }
 
@@ -35,20 +66,16 @@ export class WebSocketJsProvider extends JsProvider {
 	}
 }
 
-export class JsSocketProvider {
-	func: (
-		host: string,
-		port: number
-	) => Promise<ProviderResult> | ProviderResult;
-
-	constructor(func: typeof this.func) {
-		this.func = func;
-	}
-
-	// @internal
-	into(): WasmProvider {
-		return EpxJsProvider.provider(
-			async (host, port) => await this.func(host, port)
+export class JsSocketProvider extends Provider<EpxJsProvider, WasmProvider> {
+	constructor(
+		func: (
+			host: string,
+			port: number
+		) => Promise<ProviderResult> | ProviderResult
+	) {
+		super(
+			new EpxJsProvider(async (host, port) => await func(host, port)),
+			(x) => x.box()
 		);
 	}
 }
@@ -72,18 +99,55 @@ export class WsProxyJsSocketProvider extends JsSocketProvider {
 	}
 }
 
-export class WispSocketProvider {
-	provider: JsProvider;
-	server: string;
+export interface WispV2Handshake {
+	builders: JsProtocolExtensionBuilder[];
+}
 
-	constructor(provider: typeof this.provider, server: string) {
-		this.provider = provider;
-		this.server = server;
+export class WispSocketProvider extends Provider<
+	EpxWispProvider,
+	WasmProvider
+> {
+	clone() {
+		return this._provider.dup();
 	}
 
-	// @internal
-	into(): WasmProvider {
-		return EpxWispProvider.new(this.provider.into(), this.server);
+	constructor(
+		provider: JsProvider,
+		server: string,
+		connectionPrefs: () => [
+			v2: WispV2Handshake | undefined,
+			requiredExts: number[],
+		]
+	) {
+		let v2;
+		if (connectionPrefs) {
+			v2 = () => {
+				let [v2, required] = connectionPrefs();
+
+				let handshake: JsWispV2Handshake | undefined;
+				if (v2) {
+					let builders = new ProtocolExtensionBuilders();
+					for (let builder of v2.builders) {
+						builders.js(builder.inner);
+					}
+					handshake = new JsWispV2Handshake(builders, async () => {});
+				}
+
+				return [handshake, new Uint8Array(required)];
+			};
+		}
+		super(EpxWispProvider.new(provider.provider, server, v2), (x) => x.box());
+	}
+
+	async replaceMux() {
+		await this._provider.replace_mux();
+	}
+
+	async getExtensions(): Promise<WispExtensions | undefined> {
+		let ret = await this._provider.get_extensions();
+		if (ret) {
+			return new WispExtensions(ret);
+		}
 	}
 }
 

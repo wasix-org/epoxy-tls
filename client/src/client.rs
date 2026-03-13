@@ -14,7 +14,7 @@ use wasm_bindgen::{
 use web_sys::AbortSignal;
 
 use crate::{
-	EpoxyError, console_log,
+	EpoxyError,
 	provider::{
 		StreamProvider,
 		http::{
