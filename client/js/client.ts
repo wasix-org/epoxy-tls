@@ -129,7 +129,8 @@ export class EpoxyClient {
 			statusText: codeDesc,
 			headers,
 		});
-		(res as any).rawHeaders = rawHeaders;
+		Object.defineProperty(res, "url", { value: normalized.uri.toString() });
+		(res as any).rawHeaders = Object.fromEntries(rawHeaders);
 
 		return res;
 	}

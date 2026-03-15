@@ -14,7 +14,9 @@ use crate::{
 	EpoxyError,
 	provider::{
 		service::{WasmProvider, WasmWispProvider},
-		wisp::extension::{JsWispV2Handshake, extension_to_jsval, to_wisp_v2_handshake},
+		wisp::extension::{
+			JsWispV2Handshake, RefScope, extension_to_jsval, to_wisp_v2_handshake,
+		},
 	},
 	send_wrapper::SendWrapper,
 };
@@ -24,6 +26,7 @@ use super::{
 	service::{BoxProviderService, ProviderService},
 };
 
+pub mod builtin_extension;
 pub mod extension;
 pub mod js_extension;
 
@@ -85,7 +88,10 @@ impl WispProviderInner {
 	pub async fn get_extensions(&self) -> Option<WispProtocolExtensions> {
 		let locked = self.locked.clone().lock_owned().await;
 		if locked.mux.is_some() {
-			Some(WispProtocolExtensions(locked))
+			Some(WispProtocolExtensions {
+				locked,
+				scope: RefScope::new(),
+			})
 		} else {
 			None
 		}
@@ -126,13 +132,16 @@ impl WispProviderInner {
 }
 
 #[wasm_bindgen]
-pub struct WispProtocolExtensions(OwnedMutexGuard<WispProviderLocked>);
+pub struct WispProtocolExtensions {
+	locked: OwnedMutexGuard<WispProviderLocked>,
+	scope: RefScope,
+}
 #[wasm_bindgen]
 impl WispProtocolExtensions {
 	pub fn arr(&mut self) -> Array {
 		let arr = Array::new();
-		for ext in self.0.mux.as_mut().unwrap().get_extensions_mut() {
-			arr.push(&extension_to_jsval(ext));
+		for ext in self.locked.mux.as_mut().unwrap().get_extensions_mut() {
+			arr.push(&extension_to_jsval(ext, self.scope.token()));
 		}
 		return arr;
 	}

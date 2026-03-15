@@ -1,9 +1,9 @@
 import {
-	WispProtocolExtensions,
 	JsProtocolExtensionBuilder as EpxJsExtBuilder,
 	JsProtocolExtension as EpxJsExt,
 	JsTransportRead,
 	JsTransportWrite,
+	ProtocolExtensionBuilders,
 } from "epoxy/wbg";
 
 export type Role = "client" | "server";
@@ -28,13 +28,26 @@ export class TransportWrite {
 	}
 }
 
-export abstract class JsProtocolExtension {
+export abstract class ProtocolExtension {
+	abstract readonly id: number;
+}
+
+export abstract class ProtocolExtensionBuilder {
+	abstract readonly id: number;
+	// @internal
+	abstract inner: unknown;
+	// @internal
+	abstract appendTo(builders: ProtocolExtensionBuilders): void;
+}
+
+export abstract class JsProtocolExtension extends ProtocolExtension {
 	// @internal
 	inner: EpxJsExt;
 
 	readonly id: number;
 
 	constructor(id: number, packets: number[], congestionStreams: number[]) {
+		super();
 		this.id = id;
 
 		let encode = () => {
@@ -87,13 +100,14 @@ export abstract class JsProtocolExtension {
 	): Promise<void> | void {}
 }
 
-export abstract class JsProtocolExtensionBuilder {
+export abstract class JsProtocolExtensionBuilder extends ProtocolExtensionBuilder {
 	// @internal
 	inner: EpxJsExtBuilder;
 
 	readonly id: number;
 
 	constructor(id: number) {
+		super();
 		this.id = id;
 
 		let buildFromBytes = (bytes, role) => {
@@ -117,31 +131,8 @@ export abstract class JsProtocolExtensionBuilder {
 
 	abstract buildFromBytes(bytes: Uint8Array, role: Role): JsProtocolExtension;
 	abstract buildToExtension(role: Role): JsProtocolExtension;
-}
 
-/// Holding this object will block the wisp provider from doing anything. Don't hold extensions past drop()
-export class WispExtensions {
-	// @internal
-	inner: WispProtocolExtensions;
-	// @internal
-	arr: any[];
-
-	// @internal
-	constructor(inner: WispProtocolExtensions) {
-		this.inner = inner;
-		this.arr = inner.arr();
-	}
-
-	get(idx: number): JsProtocolExtension | undefined {
-		return this.arr[idx];
-	}
-
-	get length(): number {
-		return this.arr.length;
-	}
-
-	drop() {
-		this.arr = [];
-		this.inner.free();
+	appendTo(builders: ProtocolExtensionBuilders) {
+		builders.js(this.inner);
 	}
 }

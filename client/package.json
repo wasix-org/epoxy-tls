@@ -1,6 +1,6 @@
 {
 	"name": "@mercuryworkshop/epoxy-tls",
-	"version": "3.0.0.0",
+	"version": "3.0.0",
 	"description": "An end-to-end encrypted HTTP and WebSocket client running TLS in WebAssembly",
 	"license": "MIT",
 	"type": "module",
@@ -16,6 +16,12 @@
 		"build": "rollup -c",
 		"format": "cargo fmt && prettier -w .",
 		"prepack": "npm run build"
+	},
+	"exports": {
+		"./full": {
+			"types": "./dist/epoxy.d.ts",
+			"default": "./dist/epoxy.js"
+		}
 	},
 	"devDependencies": {
 		"@rollup/plugin-node-resolve": "^16.0.1",

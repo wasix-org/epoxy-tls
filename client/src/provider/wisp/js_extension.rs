@@ -11,6 +11,8 @@ use wisp_mux::{
 
 use crate::{EpoxyError, refstruct};
 
+use super::extension::RefScope;
+
 #[wasm_bindgen(inline_js = "export let to_protocol_extension = x => x;")]
 extern "C" {
 	fn to_protocol_extension(val: JsValue) -> JsProtocolExtension;
@@ -20,7 +22,7 @@ refstruct!(dyn TransportRead, JsTransportRead);
 #[wasm_bindgen]
 impl JsTransportRead {
 	pub async fn read(&mut self) -> Result<Option<Uint8Array>, EpoxyError> {
-		let x = self.inner().next().await.transpose()?;
+		let x = self.inner()?.next().await.transpose()?;
 		Ok(x.map(|x| Uint8Array::from(x.as_ref())))
 	}
 }
@@ -29,7 +31,7 @@ refstruct!(dyn TransportWrite, JsTransportWrite);
 #[wasm_bindgen]
 impl JsTransportWrite {
 	pub async fn write(&mut self, bytes: Uint8Array) -> Result<(), EpoxyError> {
-		self.inner().send(Payload::from(bytes.to_vec())).await?;
+		self.inner()?.send(Payload::from(bytes.to_vec())).await?;
 
 		Ok(())
 	}
@@ -158,8 +160,9 @@ impl ProtocolExtension for JsProtocolExtension {
 		read: &mut dyn TransportRead,
 		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
-		let read: JsTransportRead = read.into();
-		let write: JsTransportWrite = write.into();
+		let scope = RefScope::new();
+		let read: JsTransportRead = (read, scope.token()).into();
+		let write: JsTransportWrite = (write, scope.token()).into();
 
 		self.handshake
 			.call2(&JsValue::NULL, &read.into(), &write.into())
@@ -174,8 +177,9 @@ impl ProtocolExtension for JsProtocolExtension {
 		read: &mut dyn TransportRead,
 		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
-		let read: JsTransportRead = read.into();
-		let write: JsTransportWrite = write.into();
+		let scope = RefScope::new();
+		let read: JsTransportRead = (read, scope.token()).into();
+		let write: JsTransportWrite = (write, scope.token()).into();
 
 		self.packet
 			.call4(

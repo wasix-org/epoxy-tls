@@ -7,7 +7,7 @@ import {
 	WasmWispProvider,
 } from "epoxy/wbg";
 import { WebSocketStream } from "./websocketstream";
-import { JsProtocolExtensionBuilder, WispExtensions } from "./wispExtension";
+import { ProtocolExtensionBuilder, WispExtensions } from "./wispExtension";
 
 export type ProviderResult = [
 	readable: ReadableStream<Uint8Array<ArrayBuffer>>,
@@ -100,7 +100,7 @@ export class WsProxyJsSocketProvider extends JsSocketProvider {
 }
 
 export interface WispV2Handshake {
-	builders: JsProtocolExtensionBuilder[];
+	builders: ProtocolExtensionBuilder[];
 }
 
 export class WispSocketProvider extends Provider<
@@ -114,7 +114,7 @@ export class WispSocketProvider extends Provider<
 	constructor(
 		provider: JsProvider,
 		server: string,
-		connectionPrefs: () => [
+		connectionPrefs?: () => [
 			v2: WispV2Handshake | undefined,
 			requiredExts: number[],
 		]
@@ -128,7 +128,7 @@ export class WispSocketProvider extends Provider<
 				if (v2) {
 					let builders = new ProtocolExtensionBuilders();
 					for (let builder of v2.builders) {
-						builders.js(builder.inner);
+						builder.appendTo(builders);
 					}
 					handshake = new JsWispV2Handshake(builders, async () => {});
 				}

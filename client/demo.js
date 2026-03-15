@@ -85,6 +85,7 @@ let ret = await client.fetch("https://httpbin.org/post", {
 	body: JSON.stringify({ a: "b" }),
 	headers: { "Content-Type": "application/json" },
 });
+console.log(ret.rawHeaders);
 console.log(await ret.text());
 
 async function sendTest(read, write, log, data) {
