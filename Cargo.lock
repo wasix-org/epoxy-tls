@@ -339,7 +339,7 @@ dependencies = [
  "futures-task",
  "hdrhistogram",
  "humantime",
- "hyper-util",
+ "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "prost",
  "prost-types",
  "serde",
@@ -631,11 +631,12 @@ dependencies = [
  "bytes",
  "futures",
  "futures-rustls",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
  "hyper",
- "hyper-util-wasm",
+ "hyper-util 0.1.20 (git+https://github.com/r58Playz/hyper-util?branch=tokio-client)",
  "instant",
  "js-sys",
  "pin-project",
@@ -643,6 +644,8 @@ dependencies = [
  "rustls-pki-types",
  "thiserror 2.0.18",
  "tower 0.4.13",
+ "tower-layer",
+ "tower-service",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-streams",
@@ -670,7 +673,7 @@ dependencies = [
  "hickory-resolver",
  "http-body-util",
  "hyper",
- "hyper-util",
+ "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "libc",
  "log",
@@ -1151,7 +1154,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
 dependencies = [
  "hyper",
- "hyper-util",
+ "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project-lite",
  "tokio",
  "tower-service",
@@ -1178,9 +1181,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-util-wasm"
-version = "0.1.7"
-source = "git+https://github.com/r58Playz/hyper-util-wasm?rev=c582f05daa6529a75f6838a26ebf29ff09f62921#c582f05daa6529a75f6838a26ebf29ff09f62921"
+name = "hyper-util"
+version = "0.1.20"
+source = "git+https://github.com/r58Playz/hyper-util?branch=tokio-client#ba63e8a44234ebe900046c3fe37a54a4e12283fc"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -1189,10 +1192,10 @@ dependencies = [
  "http-body",
  "hyper",
  "pin-project-lite",
- "tower 0.4.13",
+ "tokio",
+ "tower-layer",
  "tower-service",
  "tracing",
- "wasmtimer",
 ]
 
 [[package]]
@@ -2827,7 +2830,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-timeout",
- "hyper-util",
+ "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding",
  "pin-project",
  "prost",
@@ -3229,20 +3232,6 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap 2.13.0",
  "semver",
-]
-
-[[package]]
-name = "wasmtimer"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7ed9d8b15c7fb594d72bfb4b5a276f3d2029333cd93a932f376f5937f6f80ee"
-dependencies = [
- "futures",
- "js-sys",
- "parking_lot",
- "pin-utils",
- "slab",
- "wasm-bindgen",
 ]
 
 [[package]]

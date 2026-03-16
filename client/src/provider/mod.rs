@@ -11,13 +11,12 @@ use futures_rustls::{
 	rustls::{ClientConfig, RootCertStore},
 };
 use hyper::Uri;
-use hyper_util_wasm::client::legacy::connect::{Connected, Connection};
 use pin_project::pin_project;
 use service::{BoxProviderService, ProviderService};
 use tower::Service;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::{EpoxyError, EpoxyErrorExt};
+use crate::{EpoxyError, EpoxyErrorExt, console_log};
 
 pub mod service;
 
@@ -173,23 +172,31 @@ impl StreamProvider {
 		http: bool,
 	) -> Result<ProviderEncryptedStream, EpoxyError> {
 		let unencrypted = self.get_stream(host.clone(), port).await?;
-		let connector = TlsConnector::from(if http && cfg!(feature = "full") {
+		let connector = TlsConnector::from(if http {
 			self.h2_config.clone()
 		} else {
 			self.client_config.clone()
 		});
 
 		let encrypted = connector
-			.connect(host.clone().try_into().invalid_dns_name(host)?, unencrypted)
+			.connect(
+				host.clone().try_into().invalid_dns_name(host.clone())?,
+				unencrypted,
+			)
 			.await?;
 
-		Ok(ProviderEncryptedStream {
-			h2_negotiated: encrypted
-				.get_ref()
-				.1
-				.alpn_protocol()
-				.is_some_and(|x| x == "h2".as_bytes()),
+		let h2_negotiated = encrypted
+			.get_ref()
+			.1
+			.alpn_protocol()
+			.is_some_and(|x| x == "h2".as_bytes());
 
+		if h2_negotiated {
+			console_log!("epoxy-client: negotiated h2 for {}:{}", host, port);
+		}
+
+		Ok(ProviderEncryptedStream {
+			h2_negotiated,
 			stream: encrypted,
 		})
 	}
@@ -255,18 +262,9 @@ impl hyper::rt::Write for HttpIo {
 	}
 }
 
-impl Connection for HttpIo {
-	fn connected(&self) -> Connected {
-		let conn = Connected::new();
-		if let Either::Right(tls_stream) = &self.inner {
-			if tls_stream.h2_negotiated {
-				conn.negotiated_h2()
-			} else {
-				conn
-			}
-		} else {
-			conn
-		}
+impl HttpIo {
+	pub fn is_negotiated_h2(&self) -> bool {
+		matches!(&self.inner, Either::Right(tls_stream) if tls_stream.h2_negotiated)
 	}
 }
 

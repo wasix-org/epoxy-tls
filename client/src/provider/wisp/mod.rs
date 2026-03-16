@@ -14,9 +14,7 @@ use crate::{
 	EpoxyError,
 	provider::{
 		service::{WasmProvider, WasmWispProvider},
-		wisp::extension::{
-			JsWispV2Handshake, RefScope, extension_to_jsval, to_wisp_v2_handshake,
-		},
+		wisp::extension::{JsWispV2Handshake, RefScope, extension_to_jsval, to_wisp_v2_handshake},
 	},
 	send_wrapper::SendWrapper,
 };

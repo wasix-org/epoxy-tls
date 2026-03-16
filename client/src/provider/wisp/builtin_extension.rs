@@ -20,7 +20,7 @@ use wisp_mux::extensions::{
 	},
 };
 
-use crate::{refstruct, EpoxyError};
+use crate::{EpoxyError, refstruct};
 
 #[wasm_bindgen]
 pub struct MotdProtocolExtensionBuilder(

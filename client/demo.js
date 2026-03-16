@@ -89,7 +89,7 @@ console.log(ret.rawHeaders);
 console.log(await ret.text());
 
 async function sendTest(read, write, log, data) {
-	let j = x => JSON.stringify(x);
+	let j = (x) => JSON.stringify(x);
 	console.log(`sending ${j(data)} over ${log}`);
 	await write.getWriter().write(new TextEncoder().encode(data));
 	console.log(`sent ${j(data)} over ${log}`);

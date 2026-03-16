@@ -30,8 +30,6 @@ pub enum EpoxyError {
 	IO(#[from] std::io::Error),
 	#[error("TLS: {0}")]
 	Rustls(#[from] rustls::Error),
-	#[error("Hyper client: {0}")]
-	HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
 	#[error("Hyper: {0}")]
 	Hyper(#[from] hyper::Error),
 	#[error("HTTP: {0}")]

@@ -135,10 +135,18 @@ export class EpoxyClient {
 		return res;
 	}
 
-	async connect(host: string, port: number, bufferSize: number = 16384): Promise<TcpStream> {
+	async connect(
+		host: string,
+		port: number,
+		bufferSize: number = 16384
+	): Promise<TcpStream> {
 		return new TcpStream(await this.client.connect(host, port, bufferSize));
 	}
-	async connectTls(host: string, port: number, bufferSize: number = 16384): Promise<TlsStream> {
+	async connectTls(
+		host: string,
+		port: number,
+		bufferSize: number = 16384
+	): Promise<TlsStream> {
 		return new TlsStream(await this.client.connect_tls(host, port, bufferSize));
 	}
 }
