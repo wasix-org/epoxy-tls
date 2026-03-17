@@ -11,7 +11,7 @@ import nodeResolve from "@rollup/plugin-node-resolve";
 import wasm from "@rollup/plugin-wasm";
 
 let VERSION;
-let DEBUG = false;
+let DEV = false;
 let SIZE = false;
 let FAKED_TYPES = [
 	"JsProvider",
@@ -92,7 +92,7 @@ async function compileRust(folder, args) {
 			...(SIZE ? {} : { CFLAGS: "-O3" }),
 			RUSTFLAGS:
 				"-Zunstable-options -Cpanic=immediate-abort" +
-				(DEBUG ? "" : " -Zlocation-detail=none -Zfmt-debug=none"),
+				(DEV ? "" : " -Zlocation-detail=none -Zfmt-debug=none"),
 		}
 	);
 
@@ -114,7 +114,7 @@ async function compileRust(folder, args) {
 		path.join(folder, "epoxy_client_bg.wasm"),
 		"-o",
 		path.join(folder, "epoxy.wasm"),
-		...(DEBUG ? ["-g"] : []),
+		...(DEV ? ["-g"] : []),
 		"--converge",
 		"-Oz",
 		"--flatten",
@@ -234,7 +234,7 @@ const cfg = (inputDir, inputFile, output, defs, plugins) => {
 };
 
 export default async (args) => {
-	if (args["config-debug"]) DEBUG = true;
+	if (args["config-dev"]) DEV = true;
 	if (args["config-size"]) SIZE = true;
 
 	let git = await new Promise((res, rej) => {

@@ -1,12 +1,15 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use futures::{
 	AsyncReadExt, TryStreamExt,
 	stream::{AbortHandle, Abortable},
 };
-use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, request};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, request};
 use http_body_util::BodyExt;
-use hyper::body::Incoming;
+use hyper::{
+	body::Incoming,
+	ext::{HeaderCaseMap, ReasonPhrase},
+};
 use js_sys::{Array, Uint8Array};
 use tower::ServiceExt;
 use wasm_bindgen::{
@@ -16,7 +19,7 @@ use wasm_bindgen::{
 use web_sys::AbortSignal;
 
 use crate::{
-	EpoxyError,
+	EpoxyError, console_log,
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	provider::{
 		StreamProvider, StreamProviderService,
@@ -29,55 +32,91 @@ use crate::{
 };
 
 #[wasm_bindgen]
-pub struct Header {
-	name: String,
-	values: Vec<Uint8Array>,
+pub struct ClientReqBuilder {
+	builder: Option<request::Builder>,
+	case: HeaderCaseMap,
 }
 #[wasm_bindgen]
-impl Header {
-	pub fn name(&mut self) -> String {
-		std::mem::replace(&mut self.name, String::new())
+impl ClientReqBuilder {
+	#[wasm_bindgen(constructor)]
+	pub fn new() -> Self {
+		Self {
+			builder: Some(request::Request::builder()),
+			case: HeaderCaseMap::default(),
+		}
 	}
 
-	pub fn values(&mut self) -> Vec<Uint8Array> {
-		std::mem::replace(&mut self.values, Vec::new())
+	fn modify(
+		&mut self,
+		func: impl FnOnce(request::Builder) -> Result<request::Builder, EpoxyError>,
+	) -> Result<(), EpoxyError> {
+		let take = self.builder.take();
+		self.builder.replace(func(take.unwrap())?);
+
+		Ok(())
+	}
+
+	pub fn method(&mut self, method: &str) -> Result<(), EpoxyError> {
+		self.modify(|x| Ok(x.method(Method::try_from(method)?)))
+	}
+
+	pub fn uri(&mut self, uri: String) -> Result<(), EpoxyError> {
+		self.modify(|x| Ok(x.uri(Uri::try_from(uri)?)))
+	}
+
+	pub fn header(&mut self, key: String, val: String) -> Result<(), EpoxyError> {
+		let name = HeaderName::try_from(&key)?;
+		self.case.append(name.clone(), key.into_bytes().into());
+		self.modify(|x| Ok(x.header(name, HeaderValue::try_from(val)?)))
+	}
+
+	fn take(mut self) -> request::Builder {
+		let builder = self.builder.take().unwrap();
+		builder.extension(self.case)
 	}
 }
 
 #[wasm_bindgen]
 pub struct ClientResponse {
 	status: Option<StatusCode>,
+	status_text: Option<String>,
 	headers: Option<HeaderMap>,
+	header_case: Option<HeaderCaseMap>,
 	body: Option<Incoming>,
 }
 #[wasm_bindgen]
 impl ClientResponse {
-	pub fn status(&mut self) -> Array {
+	pub fn status(&mut self) -> u16 {
 		let status = self.status.take().unwrap();
-		Array::of2(&status.as_u16().into(), &status.as_str().into())
+		status.as_u16()
 	}
 
-	pub fn headers(&mut self) -> Vec<Header> {
-		let mut headers = self.headers.take().unwrap();
-		let mut out = Vec::with_capacity(headers.keys_len());
+	pub fn status_text(&mut self) -> String {
+		self.status_text.take().unwrap()
+	}
 
-		let mut last_name = None;
-		let mut values = vec![];
-		for (name, value) in headers.drain() {
-			if last_name.is_none()
-				&& let Some(_name) = name
-			{
-				last_name = Some(_name);
-			} else if let Some(_name) = name
-				&& let Some(_last_name) = last_name
-			{
-				out.push(Header {
-					name: _last_name.to_string(),
-					values: std::mem::replace(&mut values, vec![]),
-				});
-				last_name = Some(_name);
+	pub fn headers(&mut self) -> Vec<Array> {
+		let headers = self.headers.take().unwrap();
+		let header_case = self
+			.header_case
+			.take()
+			.unwrap_or_else(|| HeaderCaseMap::default());
+		let mut out = Vec::with_capacity(headers.len());
+
+		for name in headers.keys() {
+			let mut names = header_case.get_all_internal(name);
+
+			for value in headers.get_all(name) {
+				let name = names
+					.next()
+					.map(|x| String::from_utf8_lossy(x))
+					.unwrap_or_else(|| Cow::Borrowed(name.as_str()));
+
+				let arr = Array::new();
+				arr.set(0, name.as_ref().into());
+				arr.set(1, Uint8Array::new_from_slice(value.as_bytes()).into());
+				out.push(arr);
 			}
-			values.push(Uint8Array::new_from_slice(value.as_bytes()));
 		}
 
 		out
@@ -92,38 +131,6 @@ impl ClientResponse {
 				.map_err(|x| EpoxyError::from(x).into()),
 		)
 		.into_raw()
-	}
-}
-
-#[wasm_bindgen]
-pub struct ClientReqBuilder(Option<request::Builder>);
-#[wasm_bindgen]
-impl ClientReqBuilder {
-	#[wasm_bindgen(constructor)]
-	pub fn new() -> Self {
-		Self(Some(request::Request::builder()))
-	}
-
-	fn modify(
-		&mut self,
-		func: impl FnOnce(request::Builder) -> Result<request::Builder, EpoxyError>,
-	) -> Result<(), EpoxyError> {
-		let take = self.0.take();
-		self.0.replace(func(take.unwrap())?);
-
-		Ok(())
-	}
-
-	pub fn method(&mut self, method: &str) -> Result<(), EpoxyError> {
-		self.modify(|x| Ok(x.method(Method::try_from(method)?)))
-	}
-
-	pub fn uri(&mut self, uri: String) -> Result<(), EpoxyError> {
-		self.modify(|x| Ok(x.uri(Uri::try_from(uri)?)))
-	}
-
-	pub fn header(&mut self, key: String, val: String) -> Result<(), EpoxyError> {
-		self.modify(|x| Ok(x.header(HeaderName::try_from(key)?, HeaderValue::try_from(val)?)))
 	}
 }
 
@@ -158,15 +165,24 @@ impl Client {
 			body.map(|x| EpoxyFrameStream::new(wasm_streams::ReadableStream::from_raw(x)))
 				.transpose()?,
 		);
-		let request = builder.0.unwrap().body(body)?;
+		let request = builder.take().body(body)?;
 		let client = self.build_client(request.uri()).await?;
 		let response = client.oneshot(request).await?;
 
-		let (parts, body) = response.into_parts();
+		let (mut parts, body) = response.into_parts();
+
+		let status_text = parts
+			.extensions
+			.get::<ReasonPhrase>()
+			.map(|x| String::from_utf8_lossy(x.as_bytes()).to_string())
+			.or((parts.version > Version::HTTP_11).then(|| String::new())) // should this be here?
+			.unwrap_or(parts.status.canonical_reason().unwrap_or("").to_string());
 
 		let res = ClientResponse {
 			status: Some(parts.status),
+			status_text: Some(status_text),
 			headers: Some(parts.headers),
+			header_case: parts.extensions.remove::<HeaderCaseMap>(),
 			body: Some(body),
 		};
 

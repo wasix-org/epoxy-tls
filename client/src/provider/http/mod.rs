@@ -122,8 +122,7 @@ where
 	P: Service<Uri> + Clone + Send + 'static,
 	P::Future: Send + 'static,
 	P::Error: Into<BoxError>,
-	P::Response:
-		Service<HyperRequest, Response = HyperResponse, Error = BoxError> + Send + 'static,
+	P::Response: Service<HyperRequest, Response = HyperResponse, Error = BoxError> + Send + 'static,
 	<P::Response as Service<HyperRequest>>::Future: Send + 'static,
 {
 	type Response = HyperRequestService;

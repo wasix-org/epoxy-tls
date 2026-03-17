@@ -7,6 +7,7 @@ use wasm_bindgen::{JsError, JsValue};
 use wisp_mux::WispError;
 
 mod client;
+mod http;
 mod provider;
 
 mod js_socket;
@@ -22,6 +23,13 @@ fn main() {
 	}));
 }
 
+fn fmt_option(option: &Option<String>) -> &str {
+	match option {
+		Some(x) => x,
+		None => "None",
+	}
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum EpoxyError {
 	#[error("Wisp: {0}")]
@@ -35,17 +43,17 @@ pub enum EpoxyError {
 	#[error("HTTP: {0}")]
 	Http(#[from] hyper::http::Error),
 
-	#[error("{0}")]
-	InvalidMethod(#[from] http::method::InvalidMethod),
-	#[error("{0}")]
-	InvalidUri(#[from] http::uri::InvalidUri),
-	#[error("{0}")]
-	InvalidHeaderName(#[from] http::header::InvalidHeaderName),
-	#[error("{0}")]
-	InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
+	#[error(transparent)]
+	InvalidMethod(#[from] ::http::method::InvalidMethod),
+	#[error(transparent)]
+	InvalidUri(#[from] ::http::uri::InvalidUri),
+	#[error(transparent)]
+	InvalidHeaderName(#[from] ::http::header::InvalidHeaderName),
+	#[error(transparent)]
+	InvalidHeaderValue(#[from] ::http::header::InvalidHeaderValue),
 	#[error("Invalid DNS name: {0}")]
 	InvalidDnsName(String),
-	#[error("Invalid URL scheme: {0:?}")]
+	#[error("Invalid URL scheme: \"{}\"", fmt_option(.0))]
 	InvalidUrlScheme(Option<String>),
 
 	#[error("No URL host")]

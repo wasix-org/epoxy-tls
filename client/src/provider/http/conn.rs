@@ -13,8 +13,7 @@ use tower_layer::Layer;
 use crate::console_log;
 
 use super::{
-	BoxError,
-	WasmExecutor,
+	BoxError, WasmExecutor,
 	expire::{Expire, ExpireConfig},
 };
 
@@ -45,7 +44,7 @@ where
 			Box::pin(async move {
 				let io = connector.oneshot(dst).await?;
 				let mut builder = conn::http1::Builder::new();
-				builder.http09_responses(true);
+				builder.http09_responses(true).preserve_header_case(true);
 				let (tx, conn) = builder
 					.handshake(io)
 					.await

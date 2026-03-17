@@ -5,77 +5,143 @@ import { decode } from "./util";
 interface NormalizedRequest {
 	uri: string;
 	method: string;
-	headers: Map<string, string[]>;
+	headers: [string, string][];
 	body?: ReadableStream;
-	contentType?: string;
+	signal: AbortSignal;
 }
+
+const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+function normalizeMethod(method: string): string {
+	if (!HTTP_TOKEN.test(method)) {
+		throw new TypeError(`Invalid HTTP method: ${method}`);
+	}
+
+	switch (method.toLowerCase()) {
+		case "delete":
+			return "DELETE";
+		case "get":
+			return "GET";
+		case "head":
+			return "HEAD";
+		case "options":
+			return "OPTIONS";
+		case "post":
+			return "POST";
+		case "put":
+			return "PUT";
+		default:
+			return method;
+	}
+}
+
+function normalizeHeaderValue(name: string, value: string): string {
+	let normalized = new Headers([[name, value]]).get(name);
+	if (normalized === null) {
+		throw new TypeError(`Invalid HTTP header: ${name}`);
+	}
+
+	return normalized;
+}
+
+class HeaderList {
+	#entries: { name: string; lowerName: string; value: string }[] = [];
+
+	append(name: string, value: string) {
+		let normalizedName = String(name);
+		let normalizedValue = normalizeHeaderValue(normalizedName, String(value));
+		let lowerName = normalizedName.toLowerCase();
+
+		this.#entries.push({
+			name: normalizedName,
+			lowerName,
+			value: normalizedValue,
+		});
+	}
+
+	has(name: string): boolean {
+		let lowerName = name.toLowerCase();
+		return this.#entries.some((x) => x.lowerName === lowerName);
+	}
+
+	fill(init: HeadersInit) {
+		if (init instanceof Headers) {
+			for (let [name, value] of init) {
+				this.append(name, value);
+			}
+			return;
+		}
+
+		if (Array.isArray(init)) {
+			for (let header of init) {
+				if (header.length !== 2) {
+					throw new TypeError("Each header pair must be a name/value tuple");
+				}
+
+				this.append(header[0], header[1]);
+			}
+			return;
+		}
+
+		for (let [name, value] of Object.entries(init)) {
+			this.append(name, value);
+		}
+	}
+
+	toTuples(): [string, string][] {
+		return this.#entries.map((x) => [x.name, x.value]);
+	}
+}
+
 function normalizeRequest(
 	resource: Request | URL | string,
 	options: RequestInit = {}
 ): NormalizedRequest {
-	let uri: string;
-	let method = options.method ?? "GET";
-
-	if (resource instanceof Request) {
-		uri = resource.url;
-		method = options.method ?? resource.method;
-	} else if (resource instanceof URL) {
-		uri = resource.href;
-	} else {
-		uri = resource;
-	}
-
-	let headers = new Map<string, string[]>();
-
-	function ingest(h?: HeadersInit) {
-		if (!h) return;
-
-		function append(k: string, v: string) {
-			let key = k.toLowerCase();
-			let list = headers.get(key);
-			if (list) list.push(v);
-			else headers.set(key, [v]);
-		}
-
-		if (h instanceof Headers) {
-			for (let [k, v] of h) append(k, v);
-		} else if (Array.isArray(h)) {
-			for (let [k, v] of h) append(k, v);
-		} else {
-			for (let k in h) append(k, h[k]!);
-		}
-	}
+	let inputMethod = resource instanceof Request ? resource.method : "GET";
+	let method = normalizeMethod(options.method ?? inputMethod);
+	let headers = new HeaderList();
 
 	if (options.headers !== undefined) {
-		ingest(options.headers);
+		headers.fill(options.headers);
 	} else if (resource instanceof Request) {
-		ingest(resource.headers);
+		headers.fill(resource.headers);
 	}
 
-	let body: ReadableStream<Uint8Array> | undefined;
-	let contentType: string | undefined;
+	let hasInitBody = "body" in options && options.body != null;
+	let inheritedBody = resource instanceof Request ? resource.body : null;
+	if (
+		(hasInitBody || inheritedBody !== null) &&
+		(method === "GET" || method === "HEAD")
+	) {
+		throw new TypeError("Request with GET/HEAD method cannot have body");
+	}
 
-	if (options.body !== undefined) {
-		// create temporary request to use spec body extraction
-		let tmp = new Request("http://localhost/", {
-			method: "POST",
-			body: options.body,
-		});
+	let browserInit: RequestInit & { duplex?: string } = {
+		...options,
+		headers: undefined,
+		method: hasInitBody
+			? "POST"
+			: resource instanceof Request
+				? resource.method
+				: undefined,
+	};
+	if (!hasInitBody) {
+		delete browserInit.body;
+	}
 
-		body = tmp.body as ReadableStream<Uint8Array> | null;
-
-		let detected = tmp.headers.get("content-type");
-		if (detected) contentType = detected;
-	} else if (resource instanceof Request && resource.body) {
-		body = resource.body as ReadableStream<Uint8Array>;
+	let browserRequest = new Request(resource, browserInit);
+	let body = browserRequest.body as ReadableStream<Uint8Array> | null;
+	let contentType = browserRequest.headers.get("content-type");
+	if (contentType !== null && !headers.has("content-type")) {
+		headers.append("Content-Type", contentType);
 	}
 
 	return {
-		uri,
+		uri: browserRequest.url,
 		method,
-		headers,
-		body,
-		contentType,
+		headers: headers.toTuples(),
+		body: body ?? undefined,
+		signal: browserRequest.signal,
 	};
 }
 
@@ -89,7 +155,7 @@ export class EpoxyClient {
 
 	async fetch(
 		resource: Request | URL | string,
-		options: RequestInit
+		options: RequestInit = {}
 	): Promise<Response> {
 		let normalized = normalizeRequest(resource, options);
 
@@ -97,40 +163,40 @@ export class EpoxyClient {
 		request.uri(normalized.uri);
 		request.method(normalized.method);
 
-		if (normalized.contentType) {
-			request.header("content-type", normalized.contentType);
+		for (let [header, value] of normalized.headers) {
+			request.header(header, value);
 		}
 
-		for (let [header, vals] of normalized.headers.entries()) {
-			for (let val of vals) {
-				request.header(header, val);
-			}
-		}
+		let ret = await this.client.request(
+			request,
+			normalized.signal,
+			normalized.body
+		);
 
-		let abort = new AbortController();
-		let ret = await this.client.request(request, abort.signal, normalized.body);
-
-		let [code, codeDesc] = ret.status();
-		let rawRawHeaders = ret.headers();
+		let status = ret.status();
+		let statusText = ret.status_text();
+		let rawRawHeaders = ret.headers() as unknown as [string, Uint8Array][];
 		let body = ret.body();
 
-		let rawHeaders = rawRawHeaders.map(
-			(x) => [x.name(), x.values().map((x) => decode(x))] as const
-		);
+		let rawHeaders: Record<string, string[]> = Object.create(null);
 		let headers = new Headers();
-		for (let [k, vs] of rawHeaders) {
-			for (let v of vs) {
-				headers.append(k, v);
+		for (let [name, rawValue] of rawRawHeaders) {
+			let value = decode(rawValue);
+			headers.append(name, value);
+
+			if (rawHeaders[name] === undefined) {
+				rawHeaders[name] = [];
 			}
+			rawHeaders[name].push(value);
 		}
 
 		let res = new Response(body, {
-			status: code,
-			statusText: codeDesc,
+			status,
+			statusText,
 			headers,
 		});
 		Object.defineProperty(res, "url", { value: normalized.uri.toString() });
-		(res as any).rawHeaders = Object.fromEntries(rawHeaders);
+		(res as any).rawHeaders = rawHeaders;
 
 		return res;
 	}
