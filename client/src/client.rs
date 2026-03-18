@@ -20,10 +20,10 @@ use web_sys::AbortSignal;
 
 use crate::{
 	EpoxyError,
+	http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	provider::{
 		StreamProvider, StreamProviderService,
-		http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 		service::WasmProvider,
 	},
 };

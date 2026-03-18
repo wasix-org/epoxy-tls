@@ -20,7 +20,6 @@ use crate::{EpoxyError, EpoxyErrorExt, console_log};
 
 pub mod service;
 
-pub mod http;
 pub mod js;
 pub mod wisp;
 

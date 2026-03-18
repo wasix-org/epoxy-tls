@@ -10,7 +10,7 @@ use hyper::{body::Incoming, client::conn, rt::Executor};
 use tower::{Service, ServiceExt, service_fn, util::BoxCloneService};
 use tower_layer::Layer;
 
-use crate::console_log;
+use crate::{console_log, provider::HttpIo};
 
 use super::{
 	BoxError, WasmExecutor,
@@ -32,7 +32,7 @@ pub(super) fn http1<S, B>(
 	expire: ExpireConfig,
 ) -> impl Layer<S, Service = BoxCloneService<Uri, Expire<Http1Send<B>>, BoxError>> + Clone
 where
-	S: Service<Uri, Response = super::super::HttpIo, Error = BoxError> + Clone + Send + 'static,
+	S: Service<Uri, Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
 	S::Future: Send + 'static,
 	B: hyper::body::Body + Send + Unpin + 'static,
 	B::Data: Send,
@@ -63,7 +63,7 @@ pub(super) fn http2<S, B>(
 	expire: ExpireConfig,
 ) -> impl Layer<S, Service = BoxCloneService<(), Expire<Http2Send<B>>, BoxError>> + Clone
 where
-	S: Service<(), Response = super::super::HttpIo, Error = BoxError> + Clone + Send + 'static,
+	S: Service<(), Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
 	S::Future: Send + 'static,
 	B: hyper::body::Body + Send + Unpin + 'static,
 	B::Data: Send,
