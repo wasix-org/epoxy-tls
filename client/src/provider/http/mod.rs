@@ -11,15 +11,11 @@ use bytes::Bytes;
 use futures::{StreamExt, lock::Mutex};
 use http::Uri;
 use http_body::{Body, Frame, SizeHint};
-use http_body_util::{Either, Empty, StreamBody};
 use hyper::{Request, Response, body::Incoming, rt::Executor};
 use hyper_util::client::pool::{self, cache, negotiate, singleton};
 use js_sys::Uint8Array;
-use tower::{
-	Service, ServiceExt, service_fn,
-	util::{BoxCloneService, BoxService},
-};
-use tower_layer::Layer;
+use tower::{Service, ServiceExt, service_fn};
+use tower_layer::{Layer, layer_fn};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
@@ -117,36 +113,39 @@ impl Clone for EpoxyBody {
 	}
 }
 
-type HyperRequest = Request<EpoxyBody>;
-type HyperResponse = Response<Incoming>;
-type HyperResponseFuture<T> = Pin<Box<dyn Future<Output = Result<T, EpoxyError>> + Send>>;
-
-pub type HyperRequestService = BoxService<HyperRequest, HyperResponse, EpoxyError>;
-
 pub(super) type BoxError = Box<dyn StdError + Send + Sync + 'static>;
-pub type HyperClient = BoxCloneService<Uri, HyperRequestService, EpoxyError>;
 
 type OriginKey = (Option<http::uri::Scheme>, Option<http::uri::Authority>);
 
 #[derive(Clone)]
-struct PrunedPool<P> {
+struct PrunedPool<P, F> {
 	inner: P,
-	prune: fn(&mut P),
+	prune: F,
+	needs_prune: bool,
 }
 
-impl<P> PrunedPool<P> {
-	fn new(inner: P, prune: fn(&mut P)) -> Self {
-		Self { inner, prune }
+impl<P, F> PrunedPool<P, F>
+where
+	F: FnMut(&mut P),
+{
+	fn new(inner: P, prune: F) -> Self {
+		Self {
+			inner,
+			prune,
+			needs_prune: true,
+		}
 	}
 
 	fn prune(&mut self) {
 		(self.prune)(&mut self.inner);
+		self.needs_prune = false;
 	}
 }
 
-impl<P, Req> Service<Req> for PrunedPool<P>
+impl<P, F, Req> Service<Req> for PrunedPool<P, F>
 where
 	P: Service<Req>,
+	F: FnMut(&mut P),
 {
 	type Response = P::Response;
 	type Error = P::Error;
@@ -156,83 +155,71 @@ where
 		&mut self,
 		cx: &mut std::task::Context<'_>,
 	) -> std::task::Poll<Result<(), Self::Error>> {
-		self.prune();
+		if self.needs_prune {
+			self.prune();
+		}
 		self.inner.poll_ready(cx)
 	}
 
 	fn call(&mut self, req: Req) -> Self::Future {
-		self.prune();
+		self.needs_prune = true;
 		self.inner.call(req)
 	}
 }
 
-#[derive(Clone)]
-struct UriPoolService<P> {
-	pool: P,
-}
+pub type HyperRequest = Request<EpoxyBody>;
+pub type HyperResponse = Response<Incoming>;
+pub type HyperClient =
+	impl Service<HyperRequest, Response = HyperResponse, Error = EpoxyError> + Clone;
 
-impl<P> Service<Uri> for UriPoolService<P>
-where
-	P: Service<Uri> + Clone + Send + 'static,
-	P::Future: Send + 'static,
-	P::Error: Into<BoxError>,
-	P::Response: Service<HyperRequest, Response = HyperResponse, Error = BoxError> + Send + 'static,
-	<P::Response as Service<HyperRequest>>::Future: Send + 'static,
-{
-	type Response = HyperRequestService;
-	type Error = EpoxyError;
-	type Future = HyperResponseFuture<Self::Response>;
-
-	fn poll_ready(
-		&mut self,
-		cx: &mut std::task::Context<'_>,
-	) -> std::task::Poll<Result<(), Self::Error>> {
-		self.pool
-			.poll_ready(cx)
-			.map_err(|err| pool_error(err.into()))
-	}
-
-	fn call(&mut self, uri: Uri) -> Self::Future {
-		let fut = self.pool.call(uri);
-		Box::pin(async move {
-			let selected = fut.await.map_err(|err| pool_error(err.into()))?;
-			Ok(BoxService::new(selected.map_err(pool_error)))
-		})
-	}
-}
-
+#[define_opaque(HyperClient)]
 pub fn build_hyper_client(provider: StreamProviderService) -> HyperClient {
 	let pools = pool::map::Map::builder::<Uri>()
 		.keys(scheme_and_auth)
 		.values(move |_| build_origin_service(provider.clone()))
 		.build();
-
 	let pools = Arc::new(Mutex::new(pools));
 
-	BoxCloneService::new(service_fn(move |uri: Uri| {
+	service_fn(move |req: HyperRequest| {
 		let pools = pools.clone();
 		async move {
+			let uri = req.uri().clone();
 			let pooled = {
 				let mut pools = pools.lock().await;
 				pools.service(&uri).clone()
 			};
 
-			pooled.oneshot(uri).await
+			let client = pooled.oneshot(uri).await?;
+			client.oneshot(req).await
 		}
-	}))
+	})
 }
 
-fn build_origin_service(provider: StreamProviderService) -> HyperClient {
+type OriginServiceRet = impl Service<
+		HyperRequest,
+		Response = HyperResponse,
+		Error = EpoxyError,
+		Future = impl Future<Output = Result<HyperResponse, EpoxyError>> + Send,
+	> + Send;
+#[define_opaque(OriginServiceRet)]
+fn build_origin_service(
+	provider: StreamProviderService,
+) -> impl Service<
+	Uri,
+	Response = OriginServiceRet,
+	Error = EpoxyError,
+	Future = impl Future<Output = Result<OriginServiceRet, EpoxyError>> + Send,
+> + Clone {
 	let expire = expire::ExpireConfig {
 		idle_timeout: Duration::from_secs(90),
 		max_lifetime: Duration::from_secs(300),
 	};
-	let http1 = tower::layer::layer_fn(move |svc| {
+	let http1 = layer_fn(move |svc| {
 		let svc = conn::http1::<_, EpoxyBody>(expire).layer(svc);
 		let svc = cache::builder().executor(WasmExecutor).build(svc);
 		PrunedPool::new(svc, |pool| pool.retain(|service| !service.is_expired()))
 	});
-	let http2 = tower::layer::layer_fn(move |svc| {
+	let http2 = layer_fn(move |svc| {
 		let svc = conn::http2::<_, EpoxyBody>(expire).layer(svc);
 		let svc = singleton::Singleton::new(svc);
 		PrunedPool::new(svc, |pool| pool.retain(|service| !service.is_expired()))
@@ -244,7 +231,8 @@ fn build_origin_service(provider: StreamProviderService) -> HyperClient {
 		.upgrade(http2)
 		.build::<Uri>();
 
-	BoxCloneService::new(UriPoolService { pool })
+	pool.map_response(|x| x.map_err(pool_error))
+		.map_err(|x| pool_error(x.into()))
 }
 
 fn pool_error(err: BoxError) -> EpoxyError {

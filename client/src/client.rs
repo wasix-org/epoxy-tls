@@ -11,7 +11,7 @@ use hyper::{
 	ext::{HeaderCaseMap, ReasonPhrase},
 };
 use js_sys::{Array, Uint8Array};
-use tower::ServiceExt;
+use tower::{Service, ServiceBuilder, ServiceExt};
 use wasm_bindgen::{
 	JsCast,
 	prelude::{Closure, wasm_bindgen},
@@ -19,11 +19,11 @@ use wasm_bindgen::{
 use web_sys::AbortSignal;
 
 use crate::{
-	EpoxyError, console_log,
+	EpoxyError,
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	provider::{
 		StreamProvider, StreamProviderService,
-		http::{EpoxyBody, HyperClient, HyperRequestService, build_hyper_client},
+		http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 		service::WasmProvider,
 	},
 };
@@ -139,8 +139,10 @@ pub struct Client {
 
 #[wasm_bindgen]
 impl Client {
-	async fn build_client(&self, uri: &Uri) -> Result<HyperRequestService, EpoxyError> {
-		self.hyper.clone().oneshot(uri.clone()).await
+	fn build_client(
+		&self,
+	) -> impl Service<HyperRequest, Response = HyperResponse, Error = EpoxyError> {
+		ServiceBuilder::new().service(self.hyper.clone())
 	}
 
 	#[wasm_bindgen(constructor)]
@@ -163,7 +165,7 @@ impl Client {
 			.map(|x| EpoxyBody::new(x, length))
 			.unwrap_or(EpoxyBody::Empty);
 		let request = builder.take().body(body)?;
-		let client = self.build_client(request.uri()).await?;
+		let client = self.build_client();
 		let response = client.oneshot(request).await?;
 
 		let (mut parts, body) = response.into_parts();
