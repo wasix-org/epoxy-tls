@@ -23,10 +23,7 @@ use crate::{
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	provider::{
 		StreamProvider, StreamProviderService,
-		http::{
-			EpoxyFrameStream, HyperClient, HyperRequestService, build_hyper_body,
-			build_hyper_client,
-		},
+		http::{EpoxyBody, HyperClient, HyperRequestService, build_hyper_client},
 		service::WasmProvider,
 	},
 };
@@ -160,11 +157,11 @@ impl Client {
 		&self,
 		builder: ClientReqBuilder,
 		body: Option<web_sys::ReadableStream>,
+		length: Option<u64>,
 	) -> Result<ClientResponse, EpoxyError> {
-		let body = build_hyper_body(
-			body.map(|x| EpoxyFrameStream::new(wasm_streams::ReadableStream::from_raw(x)))
-				.transpose()?,
-		);
+		let body = body
+			.map(|x| EpoxyBody::new(x, length))
+			.unwrap_or(EpoxyBody::Empty);
 		let request = builder.take().body(body)?;
 		let client = self.build_client(request.uri()).await?;
 		let response = client.oneshot(request).await?;
@@ -194,12 +191,13 @@ impl Client {
 		builder: ClientReqBuilder,
 		abort: AbortSignal,
 		body: Option<web_sys::ReadableStream>,
+		length: Option<u64>,
 	) -> Result<ClientResponse, EpoxyError> {
 		let (handle, reg) = AbortHandle::new_pair();
 		let closure = Closure::<dyn Fn()>::new(move || handle.abort());
 		abort.set_onabort(Some(closure.as_ref().unchecked_ref()));
 
-		let ret = Abortable::new(self.__request(builder, body), reg).await;
+		let ret = Abortable::new(self.__request(builder, body, length), reg).await;
 
 		ret.map_err(|_| EpoxyError::Aborted).flatten()
 	}

@@ -1,12 +1,13 @@
 import { Client, ClientReqBuilder, JsSocket } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
-import { decode } from "./util";
+import { decode, encode } from "./util";
 
 interface NormalizedRequest {
 	uri: string;
 	method: string;
 	headers: [string, string][];
 	body?: ReadableStream;
+	length?: bigint;
 	signal: AbortSignal;
 }
 
@@ -42,6 +43,32 @@ function normalizeHeaderValue(name: string, value: string): string {
 	}
 
 	return normalized;
+}
+
+function inferBodyLength(
+	body: BodyInit | null | undefined
+): bigint | undefined {
+	if (body == null) {
+		return undefined;
+	}
+
+	if (typeof body === "string") {
+		return BigInt(encode(body).byteLength);
+	}
+
+	if (body instanceof Blob) {
+		return BigInt(body.size);
+	}
+
+	if (body instanceof URLSearchParams) {
+		return BigInt(encode(body.toString()).byteLength);
+	}
+
+	if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+		return BigInt(body.byteLength);
+	}
+
+	return undefined;
 }
 
 class HeaderList {
@@ -131,6 +158,7 @@ function normalizeRequest(
 
 	let browserRequest = new Request(resource, browserInit);
 	let body = browserRequest.body as ReadableStream<Uint8Array> | null;
+	let length = inferBodyLength(hasInitBody ? options.body : undefined);
 	let contentType = browserRequest.headers.get("content-type");
 	if (contentType !== null && !headers.has("content-type")) {
 		headers.append("Content-Type", contentType);
@@ -141,6 +169,7 @@ function normalizeRequest(
 		method,
 		headers: headers.toTuples(),
 		body: body ?? undefined,
+		length,
 		signal: browserRequest.signal,
 	};
 }
@@ -170,7 +199,8 @@ export class EpoxyClient {
 		let ret = await this.client.request(
 			request,
 			normalized.signal,
-			normalized.body
+			normalized.body,
+			normalized.length
 		);
 
 		let status = ret.status();

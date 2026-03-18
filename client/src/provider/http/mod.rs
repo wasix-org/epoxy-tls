@@ -1,9 +1,16 @@
-use std::{error::Error as StdError, io, sync::Arc, time::Duration};
+use std::{
+	error::Error as StdError,
+	io,
+	pin::Pin,
+	sync::Arc,
+	task::{Context, Poll},
+	time::Duration,
+};
 
 use bytes::Bytes;
-use futures::{Stream, StreamExt, lock::Mutex};
+use futures::{StreamExt, lock::Mutex};
 use http::Uri;
-use http_body::Frame;
+use http_body::{Body, Frame, SizeHint};
 use http_body_util::{Either, Empty, StreamBody};
 use hyper::{Request, Response, body::Incoming, rt::Executor};
 use hyper_util::client::pool::{self, cache, negotiate, singleton};
@@ -16,7 +23,7 @@ use tower_layer::Layer;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
-use crate::{EpoxyError, EpoxyJsValErrorExt, send_wrapper::SendWrapper};
+use crate::{EpoxyError, send_wrapper::SendWrapper};
 
 use super::StreamProviderService;
 
@@ -31,42 +38,89 @@ impl<T: Future<Output = ()> + 'static> Executor<T> for WasmExecutor {
 	}
 }
 
-pub struct EpoxyFrameStream(SendWrapper<wasm_streams::readable::IntoStream<'static>>);
-impl EpoxyFrameStream {
-	pub fn new(stream: wasm_streams::ReadableStream) -> Result<Self, EpoxyError> {
-		match stream.try_into_stream() {
-			Ok(x) => Ok(Self(SendWrapper(x))),
-			Err((x, _)) => Err(x).js_error(),
+pub enum EpoxyBody {
+	Empty,
+	Stream {
+		current: SendWrapper<wasm_streams::readable::IntoStream<'static>>,
+		tee: web_sys::ReadableStream,
+		length: Option<u64>,
+	},
+}
+impl EpoxyBody {
+	pub fn new(stream: web_sys::ReadableStream, length: Option<u64>) -> Self {
+		let (a, b) = wasm_streams::ReadableStream::from_raw(stream).tee();
+
+		Self::Stream {
+			current: SendWrapper(a.into_stream()),
+			tee: b.into_raw(),
+			length,
 		}
 	}
 }
-impl Stream for EpoxyFrameStream {
-	type Item = Result<Frame<Bytes>, EpoxyError>;
+impl Body for EpoxyBody {
+	type Data = Bytes;
+	type Error = EpoxyError;
 
-	fn poll_next(
-		mut self: std::pin::Pin<&mut Self>,
-		cx: &mut std::task::Context<'_>,
-	) -> std::task::Poll<Option<Self::Item>> {
-		self.as_mut()
-			.0
-			.poll_next_unpin(cx)
-			.map_ok(|x| {
-				let u8array = x.unchecked_into::<Uint8Array>();
-				Frame::data(Bytes::from(u8array.to_vec()))
-			})
-			.map_err(EpoxyError::js_error)
+	fn poll_frame(
+		mut self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+	) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+		match &mut *self {
+			Self::Empty => Poll::Ready(None),
+			Self::Stream { current, .. } => current
+				.0
+				.poll_next_unpin(cx)
+				.map_ok(|x| {
+					let u8array = x.unchecked_into::<Uint8Array>();
+					Frame::data(Bytes::from(u8array.to_vec()))
+				})
+				.map_err(EpoxyError::js_error),
+		}
 	}
 
-	fn size_hint(&self) -> (usize, Option<usize>) {
-		self.0.size_hint()
+	fn is_end_stream(&self) -> bool {
+		matches!(self, Self::Empty)
+	}
+
+	fn size_hint(&self) -> SizeHint {
+		match self {
+			Self::Empty => SizeHint::with_exact(0),
+			Self::Stream { length, .. } => {
+				length.map(|x| SizeHint::with_exact(x)).unwrap_or_default()
+			}
+		}
+	}
+}
+impl Default for EpoxyBody {
+	fn default() -> Self {
+		Self::Empty
+	}
+}
+impl Clone for EpoxyBody {
+	fn clone(&self) -> Self {
+		match self {
+			Self::Empty => Self::Empty,
+			Self::Stream {
+				current: _,
+				tee,
+				length,
+			} => {
+				let (a, b) = wasm_streams::ReadableStream::from_raw(tee.clone()).tee();
+
+				Self::Stream {
+					current: SendWrapper(a.into_stream()),
+					tee: b.into_raw(),
+					length: *length,
+				}
+			}
+		}
 	}
 }
 
-type HyperRequest = Request<HyperClientBody>;
+type HyperRequest = Request<EpoxyBody>;
 type HyperResponse = Response<Incoming>;
-type HyperResponseFuture<T> = std::pin::Pin<Box<dyn Future<Output = Result<T, EpoxyError>> + Send>>;
+type HyperResponseFuture<T> = Pin<Box<dyn Future<Output = Result<T, EpoxyError>> + Send>>;
 
-pub type HyperClientBody = Either<Empty<Bytes>, StreamBody<EpoxyFrameStream>>;
 pub type HyperRequestService = BoxService<HyperRequest, HyperResponse, EpoxyError>;
 
 pub(super) type BoxError = Box<dyn StdError + Send + Sync + 'static>;
@@ -147,13 +201,6 @@ where
 	}
 }
 
-pub fn build_hyper_body(body: Option<EpoxyFrameStream>) -> HyperClientBody {
-	match body {
-		Some(body) => Either::Right(StreamBody::new(body)),
-		None => Either::Left(Empty::new()),
-	}
-}
-
 pub fn build_hyper_client(provider: StreamProviderService) -> HyperClient {
 	let pools = pool::map::Map::builder::<Uri>()
 		.keys(scheme_and_auth)
@@ -181,12 +228,12 @@ fn build_origin_service(provider: StreamProviderService) -> HyperClient {
 		max_lifetime: Duration::from_secs(300),
 	};
 	let http1 = tower::layer::layer_fn(move |svc| {
-		let svc = conn::http1::<_, HyperClientBody>(expire).layer(svc);
+		let svc = conn::http1::<_, EpoxyBody>(expire).layer(svc);
 		let svc = cache::builder().executor(WasmExecutor).build(svc);
 		PrunedPool::new(svc, |pool| pool.retain(|service| !service.is_expired()))
 	});
 	let http2 = tower::layer::layer_fn(move |svc| {
-		let svc = conn::http2::<_, HyperClientBody>(expire).layer(svc);
+		let svc = conn::http2::<_, EpoxyBody>(expire).layer(svc);
 		let svc = singleton::Singleton::new(svc);
 		PrunedPool::new(svc, |pool| pool.retain(|service| !service.is_expired()))
 	});
