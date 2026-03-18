@@ -4,7 +4,6 @@ use std::{
 	pin::Pin,
 	sync::Arc,
 	task::{Context, Poll},
-	time::Duration,
 };
 
 use bytes::Bytes;
@@ -12,10 +11,10 @@ use futures::{StreamExt, lock::Mutex};
 use http::Uri;
 use http_body::{Body, Frame, SizeHint};
 use hyper::{Request, Response, body::Incoming, rt::Executor};
-use hyper_util::client::pool::{self, cache, negotiate, singleton};
+use hyper_util::client::pool::{cache, map, negotiate, singleton};
 use js_sys::Uint8Array;
-use tower::{Service, ServiceExt, service_fn};
-use tower_layer::{Layer, layer_fn};
+use tower::{Service, ServiceBuilder, ServiceExt, service_fn, util::MapResponseLayer};
+use tower_layer::layer_fn;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
@@ -27,7 +26,7 @@ use crate::{
 
 mod conn;
 mod decomp;
-mod expire;
+mod h1;
 
 #[derive(Clone)]
 pub struct WasmExecutor;
@@ -120,56 +119,6 @@ pub(super) type BoxError = Box<dyn StdError + Send + Sync + 'static>;
 
 type OriginKey = (Option<http::uri::Scheme>, Option<http::uri::Authority>);
 
-#[derive(Clone)]
-struct PrunedPool<P, F> {
-	inner: P,
-	prune: F,
-	needs_prune: bool,
-}
-
-impl<P, F> PrunedPool<P, F>
-where
-	F: FnMut(&mut P),
-{
-	fn new(inner: P, prune: F) -> Self {
-		Self {
-			inner,
-			prune,
-			needs_prune: true,
-		}
-	}
-
-	fn prune(&mut self) {
-		(self.prune)(&mut self.inner);
-		self.needs_prune = false;
-	}
-}
-
-impl<P, F, Req> Service<Req> for PrunedPool<P, F>
-where
-	P: Service<Req>,
-	F: FnMut(&mut P),
-{
-	type Response = P::Response;
-	type Error = P::Error;
-	type Future = P::Future;
-
-	fn poll_ready(
-		&mut self,
-		cx: &mut std::task::Context<'_>,
-	) -> std::task::Poll<Result<(), Self::Error>> {
-		if self.needs_prune {
-			self.prune();
-		}
-		self.inner.poll_ready(cx)
-	}
-
-	fn call(&mut self, req: Req) -> Self::Future {
-		self.needs_prune = true;
-		self.inner.call(req)
-	}
-}
-
 pub type HyperRequest = Request<EpoxyBody>;
 pub type HyperResponse = Response<Incoming>;
 pub type HyperClient =
@@ -177,7 +126,7 @@ pub type HyperClient =
 
 #[define_opaque(HyperClient)]
 pub fn build_hyper_client(provider: StreamProviderService) -> HyperClient {
-	let pools = pool::map::Map::builder::<Uri>()
+	let pools = map::Map::builder::<Uri>()
 		.keys(scheme_and_auth)
 		.values(move |_| build_origin_service(provider.clone()))
 		.build();
@@ -213,19 +162,23 @@ fn build_origin_service(
 	Error = EpoxyError,
 	Future = impl Future<Output = Result<OriginServiceRet, EpoxyError>> + Send,
 > + Clone {
-	let expire = expire::ExpireConfig {
-		idle_timeout: Duration::from_secs(90),
-		max_lifetime: Duration::from_secs(300),
-	};
 	let http1 = layer_fn(move |svc| {
-		let svc = conn::http1::<_, EpoxyBody>(expire).layer(svc);
-		let svc = cache::builder().executor(WasmExecutor).build(svc);
-		PrunedPool::new(svc, |pool| pool.retain(|service| !service.is_expired()))
+		ServiceBuilder::new()
+			.layer(MapResponseLayer::new(|x| {
+				ServiceBuilder::new()
+					.layer_fn(h1::SetHost::new)
+					.layer_fn(h1::RequestTarget::new)
+					.service(x)
+			}))
+			.layer_fn(|x| cache::builder().build(x))
+			.layer(conn::http1())
+			.service(svc)
 	});
 	let http2 = layer_fn(move |svc| {
-		let svc = conn::http2::<_, EpoxyBody>(expire).layer(svc);
-		let svc = singleton::Singleton::new(svc);
-		PrunedPool::new(svc, |pool| pool.retain(|service| !service.is_expired()))
+		ServiceBuilder::new()
+			.layer_fn(singleton::Singleton::new)
+			.layer(conn::http2())
+			.service(svc)
 	});
 	let pool = negotiate::builder()
 		.connect(provider)
@@ -234,7 +187,7 @@ fn build_origin_service(
 		.upgrade(http2)
 		.build::<Uri>();
 
-	pool.map_response(|x| x.map_err(pool_error))
+	pool.map_response(|client| client.map_err(pool_error))
 		.map_err(|x| pool_error(x.into()))
 }
 
@@ -258,10 +211,6 @@ fn pool_error(err: BoxError) -> EpoxyError {
 		Ok(err) => return EpoxyError::from(*err),
 		Err(err) => err,
 	};
-
-	if find_source::<expire::ConnectionExpired>(&*err).is_some() {
-		return io::Error::new(io::ErrorKind::TimedOut, err.to_string()).into();
-	}
 
 	if let Some(err) = find_source::<io::Error>(&*err) {
 		return io::Error::new(err.kind(), err.to_string()).into();

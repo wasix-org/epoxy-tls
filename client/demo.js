@@ -67,7 +67,7 @@ const provider = new WispSocketProvider(
 	"wss://puter.cafe/",
 	() => [{ builders: [new PasswordExtBuilder(["", wisptoken])] }, [0x02]]
 	*/
-	"wss://anura.pro/",
+	"wss://anura.pro/"
 );
 
 await provider.replaceMux();
@@ -83,7 +83,11 @@ const client = new EpoxyClient(provider);
 let ret = await client.fetch("https://httpbin.org/post", {
 	method: "POST",
 	body: JSON.stringify({ a: "b" }),
-	headers: { "Content-Type": "application/json", "x-AbC": "abc", "X-BbC": "bcd" },
+	headers: {
+		"Content-Type": "application/json",
+		"x-AbC": "abc",
+		"X-BbC": "bcd",
+	},
 });
 console.log(ret);
 console.log(ret.rawHeaders);

@@ -12,10 +12,7 @@ use tower_layer::Layer;
 
 use crate::{console_log, provider::HttpIo};
 
-use super::{
-	BoxError, WasmExecutor,
-	expire::{Expire, ExpireConfig},
-};
+use super::{BoxError, WasmExecutor};
 
 type ConnFuture<T> = Pin<Box<dyn Future<Output = Result<T, BoxError>> + Send>>;
 
@@ -28,9 +25,7 @@ impl<B> Clone for Http2Send<B> {
 	}
 }
 
-pub(super) fn http1<S, B>(
-	expire: ExpireConfig,
-) -> impl Layer<S, Service = BoxCloneService<Uri, Expire<Http1Send<B>>, BoxError>> + Clone
+pub(super) fn http1<S, B>() -> impl Layer<S, Service = BoxCloneService<Uri, Http1Send<B>, BoxError>> + Clone
 where
 	S: Service<Uri, Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
 	S::Future: Send + 'static,
@@ -53,15 +48,13 @@ where
 					let _ = conn.with_upgrades().await;
 				});
 
-				Ok(Expire::new(Http1Send(tx), expire))
-			}) as ConnFuture<Expire<Http1Send<B>>>
+				Ok(Http1Send(tx))
+			}) as ConnFuture<Http1Send<B>>
 		}))
 	})
 }
 
-pub(super) fn http2<S, B>(
-	expire: ExpireConfig,
-) -> impl Layer<S, Service = BoxCloneService<(), Expire<Http2Send<B>>, BoxError>> + Clone
+pub(super) fn http2<S, B>() -> impl Layer<S, Service = BoxCloneService<(), Http2Send<B>, BoxError>> + Clone
 where
 	S: Service<(), Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
 	S::Future: Send + 'static,
@@ -85,8 +78,8 @@ where
 					let _ = conn.await;
 				});
 
-				Ok(Expire::new(Http2Send(tx), expire))
-			}) as ConnFuture<Expire<Http2Send<B>>>
+				Ok(Http2Send(tx))
+			}) as ConnFuture<Http2Send<B>>
 		}))
 	})
 }
