@@ -188,12 +188,22 @@ function normalizeRequest(
 	};
 }
 
+let defaultUA =
+	globalThis?.navigator?.userAgent ||
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 export class EpoxyClient {
 	// @internal
 	client: Client;
 
 	constructor(provider: SocketProvider) {
-		this.client = new Client(provider.provider);
+		this.client = new Client(provider.provider, defaultUA);
+	}
+
+	get userAgent(): string {
+		return this.client.get_ua();
+	}
+	set userAgent(val: string) {
+		this.client.set_ua(val);
 	}
 
 	async fetch(

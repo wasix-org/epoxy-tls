@@ -16,7 +16,7 @@ use service::{BoxProviderService, ProviderService};
 use tower::Service;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::{EpoxyError, EpoxyErrorExt, console_log};
+use crate::{EpoxyError, EpoxyErrorExt};
 
 pub mod service;
 

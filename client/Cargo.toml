@@ -32,7 +32,7 @@ http-body-util = "0.1.3"
 http = "1.3.1"
 http-body = "1.0.1"
 async-trait = "0.1.89"
-tower-http = { version = "0.6.8", features = ["follow-redirect", "util"] }
+tower-http = { version = "0.6.8", features = ["follow-redirect", "set-header", "util"] }
 
 [features]
 debug = []

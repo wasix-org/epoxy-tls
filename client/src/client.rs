@@ -4,7 +4,7 @@ use futures::{
 	AsyncReadExt, TryStreamExt,
 	stream::{AbortHandle, Abortable},
 };
-use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, request};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, request};
 use http_body_util::BodyExt;
 use hyper::{
 	body::Incoming,
@@ -12,7 +12,10 @@ use hyper::{
 };
 use js_sys::{Array, Uint8Array};
 use tower::{Service, ServiceBuilder, ServiceExt};
-use tower_http::follow_redirect::{self, FollowRedirectLayer, RequestUri};
+use tower_http::{
+	follow_redirect::{self, FollowRedirectLayer, RequestUri},
+	set_header::SetRequestHeaderLayer,
+};
 use wasm_bindgen::{
 	JsCast,
 	prelude::{Closure, wasm_bindgen},
@@ -59,7 +62,9 @@ impl follow_redirect::policy::Policy<EpoxyBody, EpoxyError> for RedirectPolicy {
 	) -> Result<follow_redirect::policy::Action, EpoxyError> {
 		match self {
 			Self::Follow { remaining, filter } => {
-				let _ = follow_redirect::policy::Policy::<EpoxyBody, Infallible>::redirect(filter, attempt); // always returns Ok(Follow)
+				let _ = follow_redirect::policy::Policy::<EpoxyBody, Infallible>::redirect(
+					filter, attempt,
+				); // always returns Ok(Follow)
 
 				if *remaining > 0 {
 					*remaining -= 1;
@@ -196,6 +201,7 @@ impl ClientResponse {
 pub struct Client {
 	provider: Arc<StreamProvider>,
 	hyper: HyperClient,
+	ua: HeaderValue,
 }
 
 #[wasm_bindgen]
@@ -206,17 +212,36 @@ impl Client {
 	) -> impl Service<HyperRequest, Response = HyperResponse, Error = EpoxyError> {
 		ServiceBuilder::new()
 			.layer(FollowRedirectLayer::with_policy(redirect.into_policy()))
+			.layer(SetRequestHeaderLayer::if_not_present(
+				header::ACCEPT,
+				HeaderValue::from_static("*/*"),
+			))
+			.layer(SetRequestHeaderLayer::if_not_present(
+				header::USER_AGENT,
+				self.ua.clone(),
+			))
 			.service(self.hyper.clone())
 	}
 
 	#[wasm_bindgen(constructor)]
-	pub fn new(backend: WasmProvider) -> Result<Self, EpoxyError> {
+	pub fn new(backend: WasmProvider, ua: String) -> Result<Self, EpoxyError> {
 		let provider = Arc::new(StreamProvider::new(backend.0)?);
 
 		Ok(Self {
 			hyper: build_hyper_client(StreamProviderService(provider.clone())),
 			provider,
+			ua: HeaderValue::from_str(&ua)?,
 		})
+	}
+
+	pub fn set_ua(&mut self, ua: String) -> Result<(), EpoxyError> {
+		self.ua = HeaderValue::from_str(&ua)?;
+
+		Ok(())
+	}
+	pub fn get_ua(&mut self) -> String {
+		// can only be set via a string
+		self.ua.to_str().unwrap().to_string()
 	}
 
 	async fn __request(
