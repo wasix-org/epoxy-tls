@@ -1,4 +1,4 @@
-import { Client, ClientReqBuilder, JsSocket } from "epoxy/wbg";
+import { Client, ClientReqBuilder, JsSocket, Redirect } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
 import { decode, encode } from "./util";
 
@@ -6,9 +6,21 @@ interface NormalizedRequest {
 	uri: string;
 	method: string;
 	headers: [string, string][];
+	redirect: Redirect;
 	body?: ReadableStream;
 	length?: bigint;
 	signal: AbortSignal;
+}
+
+function normalizeRedirect(redirect: RequestRedirect): Redirect {
+	switch (redirect) {
+		case "follow":
+			return Redirect.Follow;
+		case "manual":
+			return Redirect.Manual;
+		case "error":
+			return Redirect.Error;
+	}
 }
 
 const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -160,6 +172,7 @@ function normalizeRequest(
 	let body = browserRequest.body as ReadableStream<Uint8Array> | null;
 	let length = inferBodyLength(hasInitBody ? options.body : undefined);
 	let contentType = browserRequest.headers.get("content-type");
+	let redirect = normalizeRedirect(browserRequest.redirect);
 	if (contentType !== null && !headers.has("content-type")) {
 		headers.append("Content-Type", contentType);
 	}
@@ -168,6 +181,7 @@ function normalizeRequest(
 		uri: browserRequest.url,
 		method,
 		headers: headers.toTuples(),
+		redirect,
 		body: body ?? undefined,
 		length,
 		signal: browserRequest.signal,
@@ -199,12 +213,14 @@ export class EpoxyClient {
 		let ret = await this.client.request(
 			request,
 			normalized.signal,
+			normalized.redirect,
 			normalized.body,
 			normalized.length
 		);
 
 		let status = ret.status();
 		let statusText = ret.status_text();
+		let url = ret.uri();
 		let rawRawHeaders = ret.headers() as unknown as [string, Uint8Array][];
 		let body = ret.body();
 
@@ -225,7 +241,7 @@ export class EpoxyClient {
 			statusText,
 			headers,
 		});
-		Object.defineProperty(res, "url", { value: normalized.uri.toString() });
+		Object.defineProperty(res, "url", { value: url });
 		(res as any).rawHeaders = rawHeaders;
 
 		return res;

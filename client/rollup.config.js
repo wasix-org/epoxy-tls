@@ -194,6 +194,7 @@ const common = (include) => [
 			passes: 4,
 			hoist_funs: true,
 		},
+		keep_classnames: /^EpoxyError$/,
 		//mangle: {
 		//	keep_classnames: false,
 		//	keep_fnames: false,

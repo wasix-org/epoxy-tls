@@ -1,5 +1,6 @@
 use std::{
 	error::Error as StdError,
+	future::Future,
 	io,
 	pin::Pin,
 	sync::Arc,
@@ -33,6 +34,50 @@ pub struct WasmExecutor;
 impl<T: Future<Output = ()> + 'static> Executor<T> for WasmExecutor {
 	fn execute(&self, fut: T) {
 		spawn_local(fut);
+	}
+}
+
+struct DelayedRelease<S> {
+	inner: Option<S>,
+}
+
+impl<S> DelayedRelease<S> {
+	fn new(inner: S) -> Self {
+		Self { inner: Some(inner) }
+	}
+}
+
+impl<Req, S> Service<Req> for DelayedRelease<S>
+where
+	S: Service<Req> + Send + 'static,
+	S::Future: Send + 'static,
+{
+	type Response = S::Response;
+	type Error = S::Error;
+	type Future =
+		Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+	fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.inner
+			.as_mut()
+			.expect("DelayedRelease polled after inner service was consumed")
+			.poll_ready(cx)
+	}
+
+	fn call(&mut self, req: Req) -> Self::Future {
+		let mut inner = self
+			.inner
+			.take()
+			.expect("DelayedRelease called more than once");
+		let fut = inner.call(req);
+
+		Box::pin(async move {
+			let result = fut.await;
+			spawn_local(async move {
+				let _ = ServiceExt::ready(&mut inner).await;
+			});
+			result
+		})
 	}
 }
 
@@ -166,11 +211,12 @@ fn build_origin_service(
 		ServiceBuilder::new()
 			.layer(MapResponseLayer::new(|x| {
 				ServiceBuilder::new()
+					.layer_fn(DelayedRelease::new)
 					.layer_fn(h1::SetHost::new)
 					.layer_fn(h1::RequestTarget::new)
 					.service(x)
 			}))
-			.layer_fn(|x| cache::builder().build(x))
+			.layer_fn(|x| cache::builder().executor(WasmExecutor).build(x))
 			.layer(conn::http1())
 			.service(svc)
 	});

@@ -122,4 +122,72 @@ await sendTest(tcp.read, tcp.write, "tcp", ":3\n");
 let tls = await client.connectTls("tcpbin.com", 4243);
 await sendTest(tls.read, tls.write, "tls", ":3\n");
 
+function assert(condition, message) {
+	if (!condition) {
+		throw new Error(message);
+	}
+}
+
+async function testRedirects() {
+	let target = "https://httpbin.org/get?redirected=1";
+	let redirectUrl = `https://httpbin.org/redirect-to?url=${encodeURIComponent(target)}`;
+
+	let followed = await client.fetch(redirectUrl, { redirect: "follow" });
+	let followedBody = await followed.text();
+	assert(
+		followed.status === 200,
+		`expected follow status 200, got ${followed.status}`
+	);
+	assert(
+		followed.url === target,
+		`expected follow url ${target}, got ${followed.url}`
+	);
+	console.log("redirect follow", {
+		status: followed.status,
+		url: followed.url,
+		body: followedBody,
+	});
+
+	let manual = await client.fetch(redirectUrl, { redirect: "manual" });
+	let manualBody = await manual.text();
+	assert(
+		manual.status === 302,
+		`expected manual status 302, got ${manual.status}`
+	);
+	assert(
+		manual.headers.get("location") === target,
+		`expected manual location ${target}, got ${manual.headers.get("location")}`
+	);
+	console.log("redirect manual", {
+		status: manual.status,
+		url: manual.url,
+		location: manual.headers.get("location"),
+		body: manualBody,
+	});
+
+	try {
+		await client.fetch(redirectUrl, { redirect: "error" });
+		console.error("redirect error unexpectedly succeeded");
+	} catch (error) {
+		console.log("redirect error", error);
+	}
+
+	let cappedErrored = false;
+	try {
+		await client.fetch("https://httpbin.org/absolute-redirect/21", {
+			redirect: "follow",
+		});
+	} catch (error) {
+		cappedErrored = true;
+		assert(
+			String(error).includes("Too many redirects"),
+			`expected capped redirect error to include 'Too many redirects', got ${error}`
+		);
+		console.log("redirect capped", error);
+	}
+	assert(cappedErrored, "expected capped redirect to throw");
+}
+
+await testRedirects();
+
 console.log("done");

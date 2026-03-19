@@ -25,7 +25,8 @@ impl<B> Clone for Http2Send<B> {
 	}
 }
 
-pub(super) fn http1<S, B>() -> impl Layer<S, Service = BoxCloneService<Uri, Http1Send<B>, BoxError>> + Clone
+pub(super) fn http1<S, B>()
+-> impl Layer<S, Service = BoxCloneService<Uri, Http1Send<B>, BoxError>> + Clone
 where
 	S: Service<Uri, Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
 	S::Future: Send + 'static,
@@ -54,7 +55,8 @@ where
 	})
 }
 
-pub(super) fn http2<S, B>() -> impl Layer<S, Service = BoxCloneService<(), Http2Send<B>, BoxError>> + Clone
+pub(super) fn http2<S, B>()
+-> impl Layer<S, Service = BoxCloneService<(), Http2Send<B>, BoxError>> + Clone
 where
 	S: Service<(), Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
 	S::Future: Send + 'static,

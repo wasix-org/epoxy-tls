@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, convert::Infallible, sync::Arc};
 
 use futures::{
 	AsyncReadExt, TryStreamExt,
@@ -12,6 +12,7 @@ use hyper::{
 };
 use js_sys::{Array, Uint8Array};
 use tower::{Service, ServiceBuilder, ServiceExt};
+use tower_http::follow_redirect::{self, FollowRedirectLayer, RequestUri};
 use wasm_bindgen::{
 	JsCast,
 	prelude::{Closure, wasm_bindgen},
@@ -22,11 +23,66 @@ use crate::{
 	EpoxyError,
 	http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 	js_socket::{JsSocket, create_asyncread_js_socket},
-	provider::{
-		StreamProvider, StreamProviderService,
-		service::WasmProvider,
-	},
+	provider::{StreamProvider, StreamProviderService, service::WasmProvider},
 };
+#[wasm_bindgen]
+pub enum Redirect {
+	Follow,
+	Manual,
+	Error,
+}
+#[derive(Clone)]
+pub enum RedirectPolicy {
+	Follow {
+		remaining: usize,
+		filter: follow_redirect::policy::FilterCredentials,
+	},
+	Manual,
+	Error,
+}
+impl Redirect {
+	pub fn into_policy(self) -> RedirectPolicy {
+		match self {
+			Self::Follow => RedirectPolicy::Follow {
+				remaining: 20,
+				filter: follow_redirect::policy::FilterCredentials::new(),
+			},
+			Self::Manual => RedirectPolicy::Manual,
+			Self::Error => RedirectPolicy::Error,
+		}
+	}
+}
+impl follow_redirect::policy::Policy<EpoxyBody, EpoxyError> for RedirectPolicy {
+	fn redirect(
+		&mut self,
+		attempt: &follow_redirect::policy::Attempt<'_>,
+	) -> Result<follow_redirect::policy::Action, EpoxyError> {
+		match self {
+			Self::Follow { remaining, filter } => {
+				let _ = follow_redirect::policy::Policy::<EpoxyBody, Infallible>::redirect(filter, attempt); // always returns Ok(Follow)
+
+				if *remaining > 0 {
+					*remaining -= 1;
+					Ok(follow_redirect::policy::Action::Follow)
+				} else {
+					Err(EpoxyError::TooManyRedirects)
+				}
+			}
+			Self::Manual => Ok(follow_redirect::policy::Action::Stop),
+			Self::Error => Err(EpoxyError::TooManyRedirects),
+		}
+	}
+
+	fn on_request(&mut self, request: &mut http::Request<EpoxyBody>) {
+		if let RedirectPolicy::Follow { filter, .. } = self {
+			follow_redirect::policy::Policy::<EpoxyBody, Infallible>::on_request(filter, request);
+		}
+	}
+
+	fn clone_body(&self, body: &EpoxyBody) -> Option<EpoxyBody> {
+		Some(body.clone())
+	}
+}
 
 #[wasm_bindgen]
 pub struct ClientReqBuilder {
@@ -77,6 +133,7 @@ impl ClientReqBuilder {
 pub struct ClientResponse {
 	status: Option<StatusCode>,
 	status_text: Option<String>,
+	uri: Option<Uri>,
 	headers: Option<HeaderMap>,
 	header_case: Option<HeaderCaseMap>,
 	body: Option<Incoming>,
@@ -90,6 +147,10 @@ impl ClientResponse {
 
 	pub fn status_text(&mut self) -> String {
 		self.status_text.take().unwrap()
+	}
+
+	pub fn uri(&mut self) -> String {
+		self.uri.take().unwrap().to_string()
 	}
 
 	pub fn headers(&mut self) -> Vec<Array> {
@@ -141,8 +202,11 @@ pub struct Client {
 impl Client {
 	fn build_client(
 		&self,
+		redirect: Redirect,
 	) -> impl Service<HyperRequest, Response = HyperResponse, Error = EpoxyError> {
-		ServiceBuilder::new().service(self.hyper.clone())
+		ServiceBuilder::new()
+			.layer(FollowRedirectLayer::with_policy(redirect.into_policy()))
+			.service(self.hyper.clone())
 	}
 
 	#[wasm_bindgen(constructor)]
@@ -158,6 +222,7 @@ impl Client {
 	async fn __request(
 		&self,
 		builder: ClientReqBuilder,
+		redirect: Redirect,
 		body: Option<web_sys::ReadableStream>,
 		length: Option<u64>,
 	) -> Result<ClientResponse, EpoxyError> {
@@ -165,7 +230,7 @@ impl Client {
 			.map(|x| EpoxyBody::new(x, length))
 			.unwrap_or(EpoxyBody::Empty);
 		let request = builder.take().body(body)?;
-		let client = self.build_client();
+		let client = self.build_client(redirect);
 		let response = client.oneshot(request).await?;
 
 		let (mut parts, body) = response.into_parts();
@@ -180,6 +245,7 @@ impl Client {
 		let res = ClientResponse {
 			status: Some(parts.status),
 			status_text: Some(status_text),
+			uri: Some(parts.extensions.remove::<RequestUri>().unwrap().0),
 			headers: Some(parts.headers),
 			header_case: parts.extensions.remove::<HeaderCaseMap>(),
 			body: Some(body),
@@ -192,6 +258,7 @@ impl Client {
 		&self,
 		builder: ClientReqBuilder,
 		abort: AbortSignal,
+		redirect: Redirect,
 		body: Option<web_sys::ReadableStream>,
 		length: Option<u64>,
 	) -> Result<ClientResponse, EpoxyError> {
@@ -199,7 +266,7 @@ impl Client {
 		let closure = Closure::<dyn Fn()>::new(move || handle.abort());
 		abort.set_onabort(Some(closure.as_ref().unchecked_ref()));
 
-		let ret = Abortable::new(self.__request(builder, body, length), reg).await;
+		let ret = Abortable::new(self.__request(builder, redirect, body, length), reg).await;
 
 		ret.map_err(|_| EpoxyError::Aborted).flatten()
 	}

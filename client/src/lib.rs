@@ -4,7 +4,7 @@
 use core::convert::Into;
 
 use futures_rustls::rustls;
-use wasm_bindgen::{JsError, JsValue};
+use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 use wisp_mux::WispError;
 
 mod client;
@@ -29,6 +29,14 @@ fn fmt_option(option: &Option<String>) -> &str {
 		Some(x) => x,
 		None => "None",
 	}
+}
+
+#[wasm_bindgen(inline_js = r#"
+class EpoxyError extends Error {}
+export let EpoxyError_new = (msg) => new EpoxyError(msg);
+"#)]
+extern "C" {
+	fn EpoxyError_new(msg: &str) -> JsValue;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -62,6 +70,8 @@ pub enum EpoxyError {
 	#[error("No URL port")]
 	NoUrlPort,
 
+	#[error("Too many redirects")]
+	TooManyRedirects,
 	#[error("Aborted")]
 	Aborted,
 
@@ -78,7 +88,7 @@ impl EpoxyError {
 
 impl From<EpoxyError> for JsValue {
 	fn from(value: EpoxyError) -> Self {
-		JsError::from(value).into()
+		EpoxyError_new(&value.to_string()).into()
 	}
 }
 

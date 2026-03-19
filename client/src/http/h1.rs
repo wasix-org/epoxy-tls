@@ -4,8 +4,8 @@
 use std::task::{Context, Poll};
 
 use http::{
-	header::{HeaderValue, HOST},
 	Method, Request, Uri,
+	header::{HOST, HeaderValue},
 };
 use tower_service::Service;
 
