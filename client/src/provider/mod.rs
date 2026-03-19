@@ -190,10 +190,6 @@ impl StreamProvider {
 			.alpn_protocol()
 			.is_some_and(|x| x == "h2".as_bytes());
 
-		if h2_negotiated {
-			console_log!("epoxy-client: negotiated h2 for {}:{}", host, port);
-		}
-
 		Ok(ProviderEncryptedStream {
 			h2_negotiated,
 			stream: encrypted,

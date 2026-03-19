@@ -10,7 +10,7 @@ use hyper::{body::Incoming, client::conn, rt::Executor};
 use tower::{Service, ServiceExt, service_fn, util::BoxCloneService};
 use tower_layer::Layer;
 
-use crate::{console_log, provider::HttpIo};
+use crate::provider::HttpIo;
 
 use super::{BoxError, WasmExecutor};
 
@@ -71,7 +71,6 @@ where
 				let io = connector.oneshot(()).await?;
 				debug_assert!(io.is_negotiated_h2());
 
-				console_log!("epoxy-client: using h2 pooled service");
 				let (tx, conn) = conn::http2::Builder::new(WasmExecutor)
 					.handshake(io)
 					.await
