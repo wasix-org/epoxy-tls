@@ -1,2 +1,2 @@
-let wasm: () => Promise<WebAssembly.Module | ArrayBuffer | Response>;
+declare const wasm: () => Promise<WebAssembly.Module | ArrayBuffer | Response>;
 export default wasm;

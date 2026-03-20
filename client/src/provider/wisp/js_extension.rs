@@ -9,7 +9,14 @@ use wisp_mux::{
 	ws::{Payload, TransportRead, TransportWrite},
 };
 
-use crate::{EpoxyError, refstruct};
+use crate::{
+	EpoxyError,
+	js_types::{
+		JsProtocolExtensionBuilderFromBytes, JsProtocolExtensionBuilderToExtension,
+		JsProtocolExtensionEncode, JsProtocolExtensionHandshake, JsProtocolExtensionPacket,
+	},
+	refstruct,
+};
 
 use super::extension::RefScope;
 
@@ -57,11 +64,16 @@ pub struct JsProtocolExtensionBuilder {
 #[wasm_bindgen]
 impl JsProtocolExtensionBuilder {
 	#[wasm_bindgen(constructor)]
-	pub fn new(id: u8, from_bytes: Function, to_extension: Function, host: JsValue) -> Self {
+	pub fn new(
+		id: u8,
+		from_bytes: JsProtocolExtensionBuilderFromBytes,
+		to_extension: JsProtocolExtensionBuilderToExtension,
+		host: JsValue,
+	) -> Self {
 		Self {
 			id,
-			from_bytes,
-			to_extension,
+			from_bytes: from_bytes.unchecked_into(),
+			to_extension: to_extension.unchecked_into(),
 			js_host: host,
 		}
 	}
@@ -115,18 +127,18 @@ impl JsProtocolExtension {
 		id: u8,
 		supported_packets: Vec<u8>,
 		congestion_stream_types: Vec<u8>,
-		encode: Function,
-		handshake: Function,
-		packet: Function,
+		encode: JsProtocolExtensionEncode,
+		handshake: JsProtocolExtensionHandshake,
+		packet: JsProtocolExtensionPacket,
 		host: JsValue,
 	) -> Self {
 		Self {
 			id,
 			supported_packets,
 			congestion_stream_types,
-			encode,
-			handshake,
-			packet,
+			encode: encode.unchecked_into(),
+			handshake: handshake.unchecked_into(),
+			packet: packet.unchecked_into(),
 			js_host: host,
 		}
 	}

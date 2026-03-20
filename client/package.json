@@ -18,9 +18,29 @@
 		"prepack": "npm run build"
 	},
 	"exports": {
+		"./minimal": {
+			"types": "./dist/minimal.d.ts",
+			"default": "./dist/minimal.js"
+		},
+		"./minimal/wasm": {
+			"types": "./epoxy_wasm_module.d.ts",
+			"default": "./dist/minimal.wasm"
+		},
+		"./minimal/bundled": {
+			"types": "./dist/minimal.bundled.d.ts",
+			"default": "./dist/minimal.bundled.js"
+		},
 		"./full": {
-			"types": "./dist/epoxy.d.ts",
-			"default": "./dist/epoxy.js"
+			"types": "./dist/full.d.ts",
+			"default": "./dist/full.js"
+		},
+		"./full/wasm": {
+			"types": "./epoxy_wasm_module.d.ts",
+			"default": "./dist/full.wasm"
+		},
+		"./full/bundled": {
+			"types": "./dist/full.bundled.d.ts",
+			"default": "./dist/full.bundled.js"
 		}
 	},
 	"devDependencies": {

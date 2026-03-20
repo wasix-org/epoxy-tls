@@ -11,7 +11,8 @@ use wisp_mux::{
 };
 
 use crate::{
-	EpoxyError, provider::wisp::js_extension::JsProtocolExtension, send_wrapper::SendWrapper,
+	EpoxyError, js_types::JsWispV2Middleware, provider::wisp::js_extension::JsProtocolExtension,
+	send_wrapper::SendWrapper,
 };
 
 use super::{
@@ -184,7 +185,8 @@ pub struct JsWispV2Handshake(#[wasm_bindgen(skip)] pub WispV2Handshake);
 #[wasm_bindgen]
 impl JsWispV2Handshake {
 	#[wasm_bindgen(constructor)]
-	pub fn new(builders: ProtocolExtensionBuilders, middleware: Function) -> Self {
+	pub fn new(builders: ProtocolExtensionBuilders, middleware: JsWispV2Middleware) -> Self {
+		let middleware: Function = middleware.unchecked_into();
 		let closure: Box<wisp_mux::WispV2Middleware> =
 			Box::new(move |extensions: &mut Vec<AnyProtocolExtensionBuilder>| {
 				let middleware = middleware.clone();

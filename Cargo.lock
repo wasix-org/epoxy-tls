@@ -659,7 +659,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "hyper",
+ "hyper 1.8.1 (git+https://github.com/r58Playz/hyper)",
  "hyper-util 0.1.20 (git+https://github.com/r58Playz/hyper-util?branch=tokio-client)",
  "instant",
  "js-sys",
@@ -697,7 +697,7 @@ dependencies = [
  "futures-util",
  "hickory-resolver",
  "http-body-util",
- "hyper",
+ "hyper 1.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "libc",
@@ -997,7 +997,8 @@ dependencies = [
 [[package]]
 name = "h2"
 version = "0.4.13"
-source = "git+https://github.com/r58Playz/h2-wasm#621ed3c542142894f0824b9ed351a255a2d15cef"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f44da3a8150a6703ed5d34e164b875fd14c2cdab9af1252a9a1020bde2bdc54"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1006,7 +1007,6 @@ dependencies = [
  "futures-sink",
  "http",
  "indexmap 2.13.0",
- "instant",
  "slab",
  "tokio",
  "tokio-util",
@@ -1152,7 +1152,8 @@ checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
 [[package]]
 name = "hyper"
 version = "1.8.1"
-source = "git+https://github.com/r58Playz/hyper#d28ced4b30d4d4763668b0be21657a2deb2d48fd"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ab2d4f250c3d7b1c9fcdff1cece94ea4e2dfbec68614f7b87cb205f24ca9d11"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1163,6 +1164,27 @@ dependencies = [
  "http-body",
  "httparse",
  "httpdate",
+ "itoa",
+ "pin-project-lite",
+ "pin-utils",
+ "smallvec",
+ "tokio",
+ "want",
+]
+
+[[package]]
+name = "hyper"
+version = "1.8.1"
+source = "git+https://github.com/r58Playz/hyper#d28ced4b30d4d4763668b0be21657a2deb2d48fd"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "futures-channel",
+ "futures-core",
+ "h2",
+ "http",
+ "http-body",
+ "httparse",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -1176,7 +1198,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
 dependencies = [
- "hyper",
+ "hyper 1.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project-lite",
  "tokio",
@@ -1194,7 +1216,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
- "hyper",
+ "hyper 1.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "pin-project-lite",
  "socket2 0.6.3",
@@ -1213,7 +1235,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
- "hyper",
+ "hyper 1.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project-lite",
  "tokio",
  "tower-layer",
@@ -1836,6 +1858,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pin-utils"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2397,7 +2425,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "humantime",
- "hyper",
+ "hyper 1.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "sha2",
  "simple_moving_average",
  "tikv-jemallocator",
@@ -2855,7 +2883,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "hyper",
+ "hyper 1.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-timeout",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding",

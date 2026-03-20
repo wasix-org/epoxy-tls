@@ -12,10 +12,13 @@ use futures::{StreamExt, lock::Mutex};
 use http::Uri;
 use http_body::{Body, Frame, SizeHint};
 use hyper::{Request, Response, body::Incoming, rt::Executor};
-use hyper_util::client::pool::{cache, map, negotiate, singleton};
+#[cfg(feature = "full")]
+use hyper_util::client::pool::negotiate;
+#[cfg(feature = "full")]
+use hyper_util::client::pool::singleton;
+use hyper_util::client::pool::{cache, map};
 use js_sys::Uint8Array;
 use tower::{Service, ServiceBuilder, ServiceExt, service_fn, util::MapResponseLayer};
-use tower_layer::layer_fn;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 
@@ -198,29 +201,48 @@ type OriginServiceRet = impl Service<
 		Error = EpoxyError,
 		Future = impl Future<Output = Result<HyperResponse, EpoxyError>> + Send,
 	> + Send;
+
+fn h1_pool_layer<S>(
+	svc: S,
+) -> impl Service<
+	Uri,
+	Response = impl Service<
+		HyperRequest,
+		Response = HyperResponse,
+		Error = BoxError,
+		Future = impl Future<Output = Result<HyperResponse, BoxError>> + Send,
+	> + Send,
+	Error = BoxError,
+> + Clone
+where
+	S: Service<Uri, Response = HttpIo, Error = BoxError> + Clone + Send + 'static,
+	S::Future: Send + 'static,
+{
+	ServiceBuilder::new()
+		.layer(MapResponseLayer::new(|x| {
+			ServiceBuilder::new()
+				.layer_fn(DelayedRelease::new)
+				.layer_fn(h1::SetHost::new)
+				.layer_fn(h1::RequestTarget::new)
+				.service(x)
+		}))
+		.layer_fn(|x| cache::builder().executor(WasmExecutor).build(x))
+		.layer(conn::http1())
+		.service(svc)
+}
+
 #[define_opaque(OriginServiceRet)]
+#[cfg(feature = "full")]
 fn build_origin_service(
 	provider: StreamProviderService,
 ) -> impl Service<
 	Uri,
 	Response = OriginServiceRet,
 	Error = EpoxyError,
-	Future = impl Future<Output = Result<OriginServiceRet, EpoxyError>> + Send,
+	Future = impl Future<Output = Result<OriginServiceRet, EpoxyError>>,
 > + Clone {
-	let http1 = layer_fn(move |svc| {
-		ServiceBuilder::new()
-			.layer(MapResponseLayer::new(|x| {
-				ServiceBuilder::new()
-					.layer_fn(DelayedRelease::new)
-					.layer_fn(h1::SetHost::new)
-					.layer_fn(h1::RequestTarget::new)
-					.service(x)
-			}))
-			.layer_fn(|x| cache::builder().executor(WasmExecutor).build(x))
-			.layer(conn::http1())
-			.service(svc)
-	});
-	let http2 = layer_fn(move |svc| {
+	let http1 = tower_layer::layer_fn(h1_pool_layer);
+	let http2 = tower_layer::layer_fn(move |svc| {
 		ServiceBuilder::new()
 			.layer_fn(singleton::Singleton::new)
 			.layer(conn::http2())
@@ -235,6 +257,21 @@ fn build_origin_service(
 
 	pool.map_response(|client| client.map_err(pool_error))
 		.map_err(|x| pool_error(x.into()))
+}
+
+#[define_opaque(OriginServiceRet)]
+#[cfg(not(feature = "full"))]
+fn build_origin_service(
+	provider: StreamProviderService,
+) -> impl Service<
+	Uri,
+	Response = OriginServiceRet,
+	Error = EpoxyError,
+	Future = impl Future<Output = Result<OriginServiceRet, EpoxyError>>,
+> + Clone {
+	h1_pool_layer(provider.map_err(|x| Box::new(x) as BoxError))
+		.map_response(|client| client.map_err(pool_error))
+		.map_err(pool_error)
 }
 
 fn pool_error(err: BoxError) -> EpoxyError {

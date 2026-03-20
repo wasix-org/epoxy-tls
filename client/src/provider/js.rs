@@ -7,7 +7,9 @@ use wasm_streams::{ReadableStream, WritableStream};
 use wisp_mux::WispError;
 
 use crate::{
-	EpoxyError, EpoxyJsValErrorExt, jsval_debug,
+	EpoxyError, EpoxyJsValErrorExt,
+	js_types::JsProviderCallback,
+	jsval_debug,
 	provider::service::{BoxProviderService, WasmProvider, WasmWispProvider},
 	send_wrapper::SendWrapper,
 	sink_map::SinkExtMap,
@@ -26,9 +28,9 @@ pub struct JsProvider {
 #[wasm_bindgen]
 impl JsProvider {
 	#[wasm_bindgen(constructor)]
-	pub fn new(func: Function) -> Self {
+	pub fn new(func: JsProviderCallback) -> Self {
 		Self {
-			provider: SendWrapper(func),
+			provider: SendWrapper(func.unchecked_into()),
 		}
 	}
 

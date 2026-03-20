@@ -6,7 +6,7 @@ import {
 	JsProtocolExtensionBuilder,
 	WebSocketJsProvider,
 	WispSocketProvider,
-} from "./dist/epoxy.js";
+} from "./dist/full.bundled.js";
 
 console.log(version);
 
@@ -189,5 +189,7 @@ async function testRedirects() {
 }
 
 await testRedirects();
+
+await client.fetch("https://example.com");
 
 console.log("done");

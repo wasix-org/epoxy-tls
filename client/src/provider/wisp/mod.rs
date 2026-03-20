@@ -12,6 +12,7 @@ use wisp_mux::{ClientMux, WispError, packet::StreamType};
 
 use crate::{
 	EpoxyError,
+	js_types::{JsWispV2ConnectionPrefs, WispExtensionList},
 	provider::{
 		service::{WasmProvider, WasmWispProvider},
 		wisp::extension::{JsWispV2Handshake, RefScope, extension_to_jsval, to_wisp_v2_handshake},
@@ -52,24 +53,27 @@ impl WispProviderInner {
 	pub fn new(
 		service: BoxProviderService<String, WispProviderStream, EpoxyError>,
 		server: String,
-		v2: Option<Function>,
+		v2: Option<JsWispV2ConnectionPrefs>,
 	) -> Self {
 		let v2 = match v2 {
-			Some(func) => Box::new(move || {
-				let ret = func
-					.call0(&JsValue::NULL)
-					.unwrap()
-					.unchecked_into::<Array>();
+			Some(func) => {
+				let func: Function = func.unchecked_into();
+				Box::new(move || {
+					let ret = func
+						.call0(&JsValue::NULL)
+						.unwrap()
+						.unchecked_into::<Array>();
 
-				let v2 = ret.get(0);
-				let v2 = if v2.is_null_or_undefined() {
-					None
-				} else {
-					Some(to_wisp_v2_handshake(v2))
-				};
+					let v2 = ret.get(0);
+					let v2 = if v2.is_null_or_undefined() {
+						None
+					} else {
+						Some(to_wisp_v2_handshake(v2))
+					};
 
-				(v2, ret.get(1).unchecked_into::<Uint8Array>().to_vec())
-			}) as V2Func,
+					(v2, ret.get(1).unchecked_into::<Uint8Array>().to_vec())
+				}) as V2Func
+			}
 			None => Box::new(|| (None, vec![])) as V2Func,
 		};
 		Self {
@@ -136,12 +140,12 @@ pub struct WispProtocolExtensions {
 }
 #[wasm_bindgen]
 impl WispProtocolExtensions {
-	pub fn arr(&mut self) -> Array {
+	pub fn arr(&mut self) -> WispExtensionList {
 		let arr = Array::new();
 		for ext in self.locked.mux.as_mut().unwrap().get_extensions_mut() {
 			arr.push(&extension_to_jsval(ext, self.scope.token()));
 		}
-		return arr;
+		arr.unchecked_into()
 	}
 }
 
@@ -151,7 +155,11 @@ pub struct WispProvider(Arc<WispProviderInner>);
 
 #[wasm_bindgen]
 impl WispProvider {
-	pub fn new(provider: WasmWispProvider, server: String, wisp_v2: Option<Function>) -> Self {
+	pub fn new(
+		provider: WasmWispProvider,
+		server: String,
+		wisp_v2: Option<JsWispV2ConnectionPrefs>,
+	) -> Self {
 		Self(Arc::new(WispProviderInner::new(
 			provider.0, server, wisp_v2,
 		)))

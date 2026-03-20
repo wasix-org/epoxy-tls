@@ -13,6 +13,9 @@ import wasm from "@rollup/plugin-wasm";
 let VERSION;
 let DEV = false;
 let SIZE = false;
+const INLINE_WASM_LIMIT = 2 * 1024 * 1024;
+const WASM_BINDGEN_IMPORT_META_FALLBACK =
+	"module_or_path = new URL('epoxy_client_bg.wasm', import.meta.url);";
 let FAKED_TYPES = [
 	"JsProvider",
 	"WispProvider",
@@ -38,6 +41,7 @@ let FAKED_TYPES = [
 	"CertAuthProtocolExtensionBuilderRef",
 	"CertAuthProtocolExtension",
 ];
+const rustBuildCache = new Map();
 
 async function run(cmd, args, env = {}) {
 	console.log(
@@ -74,8 +78,13 @@ async function run(cmd, args, env = {}) {
 	spawned.kill();
 }
 
-async function compileRust(folder, args) {
+async function compileRust(folder, features) {
 	await fs.mkdir(folder, { recursive: true });
+	const cargoFeatures = [...features, ...(DEV ? ["debug"] : [])];
+	const featureArgs = ["--no-default-features"];
+	if (cargoFeatures.length > 0) {
+		featureArgs.push("--features", cargoFeatures.join(","));
+	}
 
 	await run(
 		"cargo",
@@ -84,9 +93,9 @@ async function compileRust(folder, args) {
 			"--release",
 			"--target",
 			"wasm32-unknown-unknown",
+			...featureArgs,
 			"-Zbuild-std=std",
 			"-Zbuild-std-features=optimize_for_size",
-			...args,
 		],
 		{
 			...(SIZE ? {} : { CFLAGS: "-O3" }),
@@ -110,6 +119,17 @@ async function compileRust(folder, args) {
 		),
 	]);
 
+	const bindgenPath = path.join(folder, "epoxy_client.js");
+	let bindgen = await fs.readFile(bindgenPath, "utf8");
+	if (!bindgen.includes(WASM_BINDGEN_IMPORT_META_FALLBACK)) {
+		throw new Error("wasm-bindgen init fallback not found");
+	}
+	bindgen = bindgen.replace(
+		WASM_BINDGEN_IMPORT_META_FALLBACK,
+		"throw new Error('module_or_path must be provided when calling init()');"
+	);
+	await fs.writeFile(bindgenPath, bindgen);
+
 	await run("wasm-opt", [
 		path.join(folder, "epoxy_client_bg.wasm"),
 		"-o",
@@ -127,17 +147,33 @@ async function compileRust(folder, args) {
 		"-Oz",
 	]);
 
-	const stat = await fs.stat(path.join(folder, "epoxy.wasm"));
+	const wasmPath = path.join(folder, "epoxy.wasm");
+	const wasmOut = path.join(
+		import.meta.dirname,
+		"dist",
+		`${path.basename(folder)}.wasm`
+	);
+	await fs.mkdir(path.dirname(wasmOut), { recursive: true });
+	await fs.copyFile(wasmPath, wasmOut);
+
+	const stat = await fs.stat(wasmPath);
 	const size = stat.size / 1024;
 	console.log(`built rust in "${folder}" with size ${size.toFixed(2)}kb`);
 }
 
-function rust(folderName, args = []) {
+function rust(folderName, features = []) {
 	const folder = path.join(import.meta.dirname, "build", folderName);
 	return {
 		name: "rust",
 		async buildStart() {
-			await compileRust(folder, args);
+			const cacheKey = JSON.stringify({ folder, features, DEV, SIZE });
+			let cached = rustBuildCache.get(cacheKey);
+			if (!cached) {
+				cached = compileRust(folder, features);
+				rustBuildCache.set(cacheKey, cached);
+			}
+
+			await cached;
 		},
 		resolveId(source) {
 			if (source === "epoxy/wbg") return path.join(folder, "epoxy_client.js");
@@ -179,10 +215,10 @@ const rustFallback = {
 	},
 };
 
-const common = (include) => [
+const common = (include, bundleWasm) => [
 	nodeResolve(),
 	wasm({
-		maxFileSize: 2 * 1024 * 1024,
+		maxFileSize: bundleWasm ? INLINE_WASM_LIMIT : 0,
 	}),
 	typescript({
 		include: include + "/**/*",
@@ -212,13 +248,18 @@ const common = (include) => [
 	}),
 ];
 
-const cfg = (inputDir, inputFile, output, defs, plugins) => {
+const cfg = (inputDir, inputFile, output, defs, bundleWasm, plugins) => {
 	const input = path.join(inputDir, inputFile);
 	const out = [
 		defineConfig({
 			input,
 			output: [{ file: output, sourcemap: true, format: "es" }],
-			plugins: [common(inputDir), ...plugins, versionInfo, rustFallback],
+			plugins: [
+				common(inputDir, bundleWasm),
+				...plugins,
+				versionInfo,
+				rustFallback,
+			],
 		}),
 	];
 	if (defs) {
@@ -249,7 +290,29 @@ export default async (args) => {
 
 	VERSION = { version, git };
 
-	return defineConfig([
-		...cfg("js", "index.ts", "dist/epoxy.js", true, [rust("full")]),
-	]);
+	const profiles = ["minimal", "full"];
+	// const profiles = ["minimal", "full", "extended"];
+	const variants = [
+		{ bundled: false, inputFile: "index_unbundled.ts", suffix: "" },
+		{ bundled: true, inputFile: "index.ts", suffix: ".bundled" },
+	];
+
+	const outputs = [];
+	for (let profile of profiles) {
+		const rustPlugin = rust(profile, [profile]);
+		for (let variant of variants) {
+			outputs.push(
+				...cfg(
+					"js",
+					variant.inputFile,
+					`dist/${profile}${variant.suffix}.js`,
+					true,
+					variant.bundled,
+					[rustPlugin]
+				)
+			);
+		}
+	}
+
+	return defineConfig(outputs);
 };

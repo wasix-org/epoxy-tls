@@ -1,5 +1,4 @@
 import wbgInit from "epoxy/wbg";
-import wasm from "epoxy/wasm";
 
 export type EpoxyInitInput =
 	| RequestInfo
@@ -20,14 +19,11 @@ export type EpoxyInitInput =
 				  >;
 	  };
 
-export async function init(input?: EpoxyInitInput) {
-	let moduleOrPath = input ?? (await wasm());
+export async function init(input: EpoxyInitInput) {
 	await wbgInit(
-		typeof moduleOrPath === "object" &&
-			moduleOrPath !== null &&
-			"module_or_path" in moduleOrPath
-			? moduleOrPath
-			: { module_or_path: moduleOrPath }
+		typeof input === "object" && input !== null && "module_or_path" in input
+			? input
+			: { module_or_path: input }
 	);
 }
 

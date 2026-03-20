@@ -17,8 +17,10 @@ use super::{BoxError, WasmExecutor};
 type ConnFuture<T> = Pin<Box<dyn Future<Output = Result<T, BoxError>> + Send>>;
 
 pub(super) struct Http1Send<B>(hyper::client::conn::http1::SendRequest<B>);
+#[cfg(feature = "full")]
 pub(super) struct Http2Send<B>(hyper::client::conn::http2::SendRequest<B>);
 
+#[cfg(feature = "full")]
 impl<B> Clone for Http2Send<B> {
 	fn clone(&self) -> Self {
 		Self(self.0.clone())
@@ -55,6 +57,7 @@ where
 	})
 }
 
+#[cfg(feature = "full")]
 pub(super) fn http2<S, B>()
 -> impl Layer<S, Service = BoxCloneService<(), Http2Send<B>, BoxError>> + Clone
 where
@@ -107,6 +110,7 @@ where
 	}
 }
 
+#[cfg(feature = "full")]
 impl<B> Service<Request<B>> for Http2Send<B>
 where
 	B: hyper::body::Body + Send + Unpin + 'static,

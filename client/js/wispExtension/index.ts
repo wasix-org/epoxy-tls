@@ -7,7 +7,7 @@ export class WispExtensions {
 	// @internal
 	inner: WispProtocolExtensions;
 	// @internal
-	arr: any[];
+	arr: unknown[];
 
 	// @internal
 	constructor(inner: WispProtocolExtensions) {

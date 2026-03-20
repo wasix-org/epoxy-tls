@@ -12,6 +12,7 @@ mod http;
 mod provider;
 
 mod js_socket;
+mod js_types;
 mod log;
 mod send_wrapper;
 mod sink_map;

@@ -231,7 +231,7 @@ export class EpoxyClient {
 		let status = ret.status();
 		let statusText = ret.status_text();
 		let url = ret.uri();
-		let rawRawHeaders = ret.headers() as unknown as [string, Uint8Array][];
+		let rawRawHeaders = ret.headers();
 		let body = ret.body();
 
 		let rawHeaders: Record<string, string[]> = Object.create(null);

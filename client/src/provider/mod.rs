@@ -16,12 +16,12 @@ use service::{BoxProviderService, ProviderService};
 use tower::Service;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::{EpoxyError, EpoxyErrorExt};
+use crate::{EpoxyError, EpoxyErrorExt, provider::extra_roots::EXTRA_TLS_SERVER_ROOTS};
 
 pub mod service;
-
 pub mod js;
 pub mod wisp;
+mod extra_roots;
 
 pub struct ProviderServiceReq {
 	pub host: String,
@@ -32,6 +32,7 @@ pub struct ProviderServiceReq {
 pub struct ProviderEncryptedStream {
 	#[pin]
 	pub stream: TlsStream<ProviderUnencryptedStream>,
+	#[cfg(feature = "full")]
 	h2_negotiated: bool,
 }
 impl AsyncRead for ProviderEncryptedStream {
@@ -140,19 +141,25 @@ impl StreamProvider {
 		let provider = Arc::new(futures_rustls::rustls::crypto::ring::default_provider());
 		let client_config = ClientConfig::builder_with_provider(provider.clone())
 			.with_safe_default_protocol_versions()?
-			.with_root_certificates(TLS_SERVER_ROOTS.iter().cloned().collect::<RootCertStore>())
+			.with_root_certificates(TLS_SERVER_ROOTS.iter().chain(EXTRA_TLS_SERVER_ROOTS.iter()).cloned().collect::<RootCertStore>())
 			.with_no_client_auth();
+		let client_config = Arc::new(client_config);
 
-		let no_alpn_client_config = Arc::new(client_config.clone());
-		let mut alpn_client_config = client_config;
-		alpn_client_config.alpn_protocols =
-			vec!["h2".as_bytes().to_vec(), "http/1.1".as_bytes().to_vec()];
-		let client_config = Arc::new(alpn_client_config);
+		#[cfg(feature = "full")]
+		let h2_config = {
+			let mut h2_client_config = (*client_config).clone();
+			h2_client_config.alpn_protocols =
+				vec!["h2".as_bytes().to_vec(), "http/1.1".as_bytes().to_vec()];
+			Arc::new(h2_client_config)
+		};
+
+		#[cfg(not(feature = "full"))]
+		let h2_config = client_config.clone();
 
 		Ok(Self {
 			service,
-			h2_config: client_config,
-			client_config: no_alpn_client_config,
+			h2_config,
+			client_config,
 		})
 	}
 
@@ -184,6 +191,7 @@ impl StreamProvider {
 			)
 			.await?;
 
+		#[cfg(feature = "full")]
 		let h2_negotiated = encrypted
 			.get_ref()
 			.1
@@ -191,6 +199,7 @@ impl StreamProvider {
 			.is_some_and(|x| x == "h2".as_bytes());
 
 		Ok(ProviderEncryptedStream {
+			#[cfg(feature = "full")]
 			h2_negotiated,
 			stream: encrypted,
 		})
@@ -258,6 +267,7 @@ impl hyper::rt::Write for HttpIo {
 }
 
 impl HttpIo {
+	#[cfg(feature = "full")]
 	pub fn is_negotiated_h2(&self) -> bool {
 		matches!(&self.inner, Either::Right(tls_stream) if tls_stream.h2_negotiated)
 	}

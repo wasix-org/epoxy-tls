@@ -26,6 +26,7 @@ use crate::{
 	EpoxyError,
 	http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 	js_socket::{JsSocket, create_asyncread_js_socket},
+	js_types::RawHeaders,
 	provider::{StreamProvider, StreamProviderService, service::WasmProvider},
 };
 #[wasm_bindgen]
@@ -158,13 +159,13 @@ impl ClientResponse {
 		self.uri.take().unwrap().to_string()
 	}
 
-	pub fn headers(&mut self) -> Vec<Array> {
+	pub fn headers(&mut self) -> RawHeaders {
 		let headers = self.headers.take().unwrap();
 		let header_case = self
 			.header_case
 			.take()
 			.unwrap_or_else(|| HeaderCaseMap::default());
-		let mut out = Vec::with_capacity(headers.len());
+		let out = Array::new();
 
 		for name in headers.keys() {
 			let mut names = header_case.get_all_internal(name);
@@ -178,11 +179,11 @@ impl ClientResponse {
 				let arr = Array::new();
 				arr.set(0, name.as_ref().into());
 				arr.set(1, Uint8Array::new_from_slice(value.as_bytes()).into());
-				out.push(arr);
+				out.push(&arr.into());
 			}
 		}
 
-		out
+		out.unchecked_into()
 	}
 
 	pub fn body(&mut self) -> web_sys::ReadableStream {
