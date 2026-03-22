@@ -121,7 +121,6 @@ impl<W: TransportWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
 		buf: &[u8],
 	) -> Poll<io::Result<usize>> {
 		ready!(self.write.poll_lock(cx));
-		ready!(self.write.get().poll_flush(cx)).map_err(io::Error::other)?;
 		ready!(self.write.get().poll_ready(cx)).map_err(io::Error::other)?;
 
 		let packet = Packet::new_data(self.info.id, buf);
