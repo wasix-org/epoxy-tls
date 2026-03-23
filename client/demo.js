@@ -93,6 +93,8 @@ console.log(ret);
 console.log(ret.rawHeaders);
 console.log(await ret.text());
 
+console.log(await client.fetch("https://example.com").then(r=>r.text()));
+
 async function sendTest(read, write, log, data) {
 	let j = (x) => JSON.stringify(x);
 	console.log(`sending ${j(data)} over ${log}`);
@@ -189,7 +191,5 @@ async function testRedirects() {
 }
 
 await testRedirects();
-
-await client.fetch("https://example.com");
 
 console.log("done");
