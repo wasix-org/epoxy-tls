@@ -4,11 +4,15 @@ use futures::{
 	AsyncReadExt, TryStreamExt,
 	stream::{AbortHandle, Abortable},
 };
-use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, request};
+use http::{
+	HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri, Version, header, request,
+	response,
+};
 use http_body_util::BodyExt;
 use hyper::{
 	body::Incoming,
 	ext::{HeaderCaseMap, ReasonPhrase},
+	upgrade,
 };
 use js_sys::{Array, Uint8Array};
 use tower::{Service, ServiceBuilder, ServiceExt};
@@ -27,8 +31,21 @@ use crate::{
 	http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	js_types::RawHeaders,
-	provider::{StreamProvider, StreamProviderService, service::WasmProvider},
+	provider::{StreamProvider, StreamProviderService, TlsAlpnMode, service::WasmProvider},
+	websocket::{WsUpgrade, websocket_streams},
 };
+
+#[wasm_bindgen(inline_js = "
+export function ws_key() {
+	let key = new Uint8Array(16);
+	crypto.getRandomValues(key);
+	return btoa(String.fromCharCode.apply(null, key));
+}
+")]
+extern "C" {
+	pub fn ws_key() -> String;
+}
+
 #[wasm_bindgen]
 pub enum Redirect {
 	Follow,
@@ -202,6 +219,7 @@ impl ClientResponse {
 pub struct Client {
 	provider: Arc<StreamProvider>,
 	hyper: HyperClient,
+	hyper_h1: HyperClient,
 	ua: HeaderValue,
 }
 
@@ -210,7 +228,14 @@ impl Client {
 	fn build_client(
 		&self,
 		redirect: Redirect,
+		h1_only: bool,
 	) -> impl Service<HyperRequest, Response = HyperResponse, Error = EpoxyError> {
+		let hyper = if h1_only {
+			self.hyper_h1.clone()
+		} else {
+			self.hyper.clone()
+		};
+
 		ServiceBuilder::new()
 			.layer(FollowRedirectLayer::with_policy(redirect.into_policy()))
 			.layer(SetRequestHeaderLayer::if_not_present(
@@ -221,15 +246,18 @@ impl Client {
 				header::USER_AGENT,
 				self.ua.clone(),
 			))
-			.service(self.hyper.clone())
+			.service(hyper)
 	}
 
 	#[wasm_bindgen(constructor)]
 	pub fn new(backend: WasmProvider, ua: String) -> Result<Self, EpoxyError> {
 		let provider = Arc::new(StreamProvider::new(backend.0)?);
+		let hyper = build_hyper_client(StreamProviderService::auto(provider.clone()));
+		let hyper_h1 = build_hyper_client(StreamProviderService::h1_only(provider.clone()));
 
 		Ok(Self {
-			hyper: build_hyper_client(StreamProviderService(provider.clone())),
+			hyper,
+			hyper_h1,
 			provider,
 			ua: HeaderValue::from_str(&ua)?,
 		})
@@ -245,6 +273,15 @@ impl Client {
 		self.ua.to_str().unwrap().to_string()
 	}
 
+	fn get_status_text(parts: &response::Parts) -> String {
+		parts
+			.extensions
+			.get::<ReasonPhrase>()
+			.map(|x| String::from_utf8_lossy(x.as_bytes()).to_string())
+			.or((parts.version > Version::HTTP_11).then(|| String::new())) // should this be here?
+			.unwrap_or(parts.status.canonical_reason().unwrap_or("").to_string())
+	}
+
 	async fn __request(
 		&self,
 		builder: ClientReqBuilder,
@@ -256,17 +293,11 @@ impl Client {
 			.map(|x| EpoxyBody::new(x, length))
 			.unwrap_or(EpoxyBody::Empty);
 		let request = builder.take().body(body)?;
-		let client = self.build_client(redirect);
+
+		let client = self.build_client(redirect, false);
 		let response = client.oneshot(request).await?;
-
 		let (mut parts, body) = response.into_parts();
-
-		let status_text = parts
-			.extensions
-			.get::<ReasonPhrase>()
-			.map(|x| String::from_utf8_lossy(x.as_bytes()).to_string())
-			.or((parts.version > Version::HTTP_11).then(|| String::new())) // should this be here?
-			.unwrap_or(parts.status.canonical_reason().unwrap_or("").to_string());
+		let status_text = Self::get_status_text(&parts);
 
 		let res = ClientResponse {
 			status: Some(parts.status),
@@ -297,6 +328,101 @@ impl Client {
 		ret.map_err(|_| EpoxyError::Aborted).flatten()
 	}
 
+	pub async fn upgrade_ws(
+		&self,
+		builder: ClientReqBuilder,
+		protocols: Vec<String>,
+	) -> Result<WsUpgrade, EpoxyError> {
+		let request = builder
+			.take()
+			.version(Version::HTTP_11)
+			.body(EpoxyBody::Empty)?;
+		let protocol = (!protocols.is_empty())
+			.then(|| HeaderValue::try_from(protocols.join(", ")))
+			.transpose()?;
+
+		let client = self.build_client(Redirect::Error, true);
+		let client = ServiceBuilder::new()
+			.layer(SetRequestHeaderLayer::overriding(
+				header::CONNECTION,
+				HeaderValue::from_static("Upgrade"),
+			))
+			.layer(SetRequestHeaderLayer::overriding(
+				header::UPGRADE,
+				HeaderValue::from_static("websocket"),
+			))
+			.layer(SetRequestHeaderLayer::overriding(
+				header::SEC_WEBSOCKET_KEY,
+				|_: &Request<EpoxyBody>| Some(HeaderValue::try_from(ws_key()).unwrap()),
+			))
+			.layer(SetRequestHeaderLayer::overriding(
+				header::SEC_WEBSOCKET_VERSION,
+				HeaderValue::from_static("13"),
+			))
+			.layer(SetRequestHeaderLayer::overriding(
+				header::SEC_WEBSOCKET_PROTOCOL,
+				|_: &Request<EpoxyBody>| protocol.clone(),
+			))
+			.service(client);
+
+		let mut response = client.oneshot(request).await?;
+		let on_upgrade = upgrade::on(&mut response);
+		let (mut parts, _body) = response.into_parts();
+		let status_text = Self::get_status_text(&parts);
+
+		if parts.status != StatusCode::SWITCHING_PROTOCOLS {
+			return Err(EpoxyError::WsStatusCode(parts.status));
+		}
+		if parts
+			.headers
+			.get(header::CONNECTION)
+			.and_then(|x| x.to_str().ok())
+			.is_none_or(|x| !x.eq_ignore_ascii_case("upgrade"))
+		{
+			return Err(EpoxyError::WsMissingConnection);
+		}
+		if parts
+			.headers
+			.get(header::UPGRADE)
+			.and_then(|x| x.to_str().ok())
+			.is_none_or(|x| !x.eq_ignore_ascii_case("websocket"))
+		{
+			return Err(EpoxyError::WsMissingUpgrade);
+		}
+		if !protocols.is_empty() {
+			let protocol_header = parts
+				.headers
+				.get(header::SEC_WEBSOCKET_PROTOCOL)
+				.and_then(|x| x.to_str().ok());
+
+			if protocol_header.is_none_or(|x| !protocols.iter().any(|y| x == y)) {
+				return Err(EpoxyError::WsProtocol(
+					protocol_header.map(ToString::to_string),
+				));
+			}
+		}
+
+		// TODO check sec-websocket-accept
+
+		let res = ClientResponse {
+			status: Some(parts.status),
+			status_text: Some(status_text),
+			uri: Some(parts.extensions.remove::<RequestUri>().unwrap().0),
+			headers: Some(parts.headers),
+			header_case: parts.extensions.remove::<HeaderCaseMap>(),
+			body: None,
+		};
+
+		let (read, write) = websocket_streams(on_upgrade.await?);
+
+		let out = Array::new();
+		out.set(0, res.into());
+		out.set(1, read.into());
+		out.set(2, write.into());
+
+		Ok(out.unchecked_into())
+	}
+
 	pub async fn connect(
 		&self,
 		host: String,
@@ -316,7 +442,7 @@ impl Client {
 		buffer_size: usize,
 	) -> Result<JsSocket, EpoxyError> {
 		self.provider
-			.get_tls_stream(host, port, false)
+			.get_tls_stream(host, port, TlsAlpnMode::None)
 			.await
 			.map(|x| {
 				let (rx, tx) = x.stream.split();

@@ -40,6 +40,8 @@ let FAKED_TYPES = [
 	"CertAuthProtocolExtensionBuilder",
 	"CertAuthProtocolExtensionBuilderRef",
 	"CertAuthProtocolExtension",
+	"WsReadEvent",
+	"WsWriteEvent",
 ];
 const rustBuildCache = new Map();
 

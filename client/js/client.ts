@@ -1,6 +1,8 @@
 import { Client, ClientReqBuilder, JsSocket, Redirect } from "epoxy/wbg";
+import { type WsReadEvent, type WsWriteEvent } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
 import { decode, encode } from "./util";
+import { EpoxyWS, EpoxyWebSocketOptions, EpoxyRawHeaders } from "./websocket";
 
 interface NormalizedRequest {
 	uri: string;
@@ -11,6 +13,14 @@ interface NormalizedRequest {
 	length?: bigint;
 	signal: AbortSignal;
 }
+
+interface NormalizedWebSocketRequest {
+	uri: string;
+	headers: [string, string][];
+	protocols: string[];
+}
+
+export type EpoxyResponse = Response & { rawHeaders: EpoxyRawHeaders };
 
 function normalizeRedirect(redirect: RequestRedirect): Redirect {
 	switch (redirect) {
@@ -132,6 +142,89 @@ class HeaderList {
 	}
 }
 
+function decodeRawHeaders(
+	rawRawHeaders: [string, Uint8Array<ArrayBufferLike>][]
+): { headers: Headers; rawHeaders: EpoxyRawHeaders } {
+	let rawHeaders: EpoxyRawHeaders = Object.create(null);
+	let headers = new Headers();
+
+	for (let [name, rawValue] of rawRawHeaders) {
+		let value = decode(rawValue);
+		headers.append(name, value);
+
+		if (rawHeaders[name] === undefined) {
+			rawHeaders[name] = [];
+		}
+		rawHeaders[name].push(value);
+	}
+
+	return { headers, rawHeaders };
+}
+
+function normalizeWebSocketUrl(resource: string | URL): string {
+	let uri = new URL(resource.toString(), globalThis.location?.href);
+	if (uri.hash !== "") {
+		throw new SyntaxError("WebSocket URL cannot contain a fragment");
+	}
+
+	switch (uri.protocol) {
+		case "ws:":
+			uri.protocol = "http:";
+			break;
+		case "wss:":
+			uri.protocol = "https:";
+			break;
+		case "http:":
+		case "https:":
+			break;
+		default:
+			throw new SyntaxError(
+				`Unsupported WebSocket URL scheme: ${uri.protocol}`
+			);
+	}
+
+	return uri.toString();
+}
+
+function normalizeWebSocketProtocols(
+	protocols: string | string[] | undefined
+): string[] {
+	if (protocols === undefined) {
+		return [];
+	}
+
+	let list =
+		typeof protocols === "string" ? [protocols] : Array.from(protocols);
+	let seen = new Set<string>();
+	for (let protocol of list) {
+		if (!HTTP_TOKEN.test(protocol)) {
+			throw new SyntaxError(`Invalid WebSocket protocol: ${protocol}`);
+		}
+		if (seen.has(protocol)) {
+			throw new SyntaxError(`Duplicate WebSocket protocol: ${protocol}`);
+		}
+		seen.add(protocol);
+	}
+
+	return list;
+}
+
+function normalizeWebSocketRequest(
+	resource: string | URL,
+	options: EpoxyWebSocketOptions = {}
+): NormalizedWebSocketRequest {
+	let headers = new HeaderList();
+	if (options.headers !== undefined) {
+		headers.fill(options.headers);
+	}
+
+	return {
+		uri: normalizeWebSocketUrl(resource),
+		headers: headers.toTuples(),
+		protocols: normalizeWebSocketProtocols(options.protocols),
+	};
+}
+
 function normalizeRequest(
 	resource: Request | URL | string,
 	options: RequestInit = {}
@@ -209,7 +302,7 @@ export class EpoxyClient {
 	async fetch(
 		resource: Request | URL | string,
 		options: RequestInit = {}
-	): Promise<Response> {
+	): Promise<EpoxyResponse> {
 		let normalized = normalizeRequest(resource, options);
 
 		let request = new ClientReqBuilder();
@@ -231,30 +324,49 @@ export class EpoxyClient {
 		let status = ret.status();
 		let statusText = ret.status_text();
 		let url = ret.uri();
-		let rawRawHeaders = ret.headers();
+		let rawRawHeaders = ret.headers() as [
+			string,
+			Uint8Array<ArrayBufferLike>,
+		][];
 		let body = ret.body();
 
-		let rawHeaders: Record<string, string[]> = Object.create(null);
-		let headers = new Headers();
-		for (let [name, rawValue] of rawRawHeaders) {
-			let value = decode(rawValue);
-			headers.append(name, value);
-
-			if (rawHeaders[name] === undefined) {
-				rawHeaders[name] = [];
-			}
-			rawHeaders[name].push(value);
-		}
+		let { headers, rawHeaders } = decodeRawHeaders(rawRawHeaders);
 
 		let res = new Response(body, {
 			status,
 			statusText,
 			headers,
-		});
+		}) as EpoxyResponse;
 		Object.defineProperty(res, "url", { value: url });
-		(res as any).rawHeaders = rawHeaders;
+		Object.defineProperty(res, "rawHeaders", { value: rawHeaders });
 
 		return res;
+	}
+
+	async websocket(
+		resource: string | URL,
+		options: EpoxyWebSocketOptions = {}
+	): Promise<EpoxyWS> {
+		let normalized = normalizeWebSocketRequest(resource, options);
+
+		let request = new ClientReqBuilder();
+		request.uri(normalized.uri);
+		request.method("GET");
+		for (let [header, value] of normalized.headers) {
+			request.header(header, value);
+		}
+
+		let ret = (await this.client.upgrade_ws(request, normalized.protocols)) as [
+			{ headers(): [string, Uint8Array<ArrayBufferLike>][] },
+			ReadableStream<WsReadEvent>,
+			WritableStream<WsWriteEvent>,
+		];
+
+		let rawRawHeaders = ret[0].headers();
+		let { headers, rawHeaders } = decodeRawHeaders(rawRawHeaders);
+		let protocol = headers.get("sec-websocket-protocol") ?? "";
+
+		return new EpoxyWS(ret[1], ret[2], protocol, headers, rawHeaders);
 	}
 
 	async connect(

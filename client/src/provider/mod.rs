@@ -18,14 +18,27 @@ use webpki_roots::TLS_SERVER_ROOTS;
 
 use crate::{EpoxyError, EpoxyErrorExt, provider::extra_roots::EXTRA_TLS_SERVER_ROOTS};
 
-pub mod service;
-pub mod js;
-pub mod wisp;
 mod extra_roots;
+pub mod js;
+pub mod service;
+pub mod wisp;
 
 pub struct ProviderServiceReq {
 	pub host: String,
 	pub port: u16,
+}
+
+#[derive(Clone, Copy)]
+pub enum TlsAlpnMode {
+	None,
+	HttpAuto,
+	Http1Only,
+}
+
+#[derive(Clone, Copy)]
+pub enum HttpVersionMode {
+	Auto,
+	Http1Only,
 }
 
 #[pin_project]
@@ -132,7 +145,8 @@ type StreamProviderBackendService =
 pub struct StreamProvider {
 	service: StreamProviderBackendService,
 
-	h2_config: Arc<ClientConfig>,
+	http_auto_config: Arc<ClientConfig>,
+	http_h1_config: Arc<ClientConfig>,
 	client_config: Arc<ClientConfig>,
 }
 
@@ -141,24 +155,36 @@ impl StreamProvider {
 		let provider = Arc::new(futures_rustls::rustls::crypto::ring::default_provider());
 		let client_config = ClientConfig::builder_with_provider(provider.clone())
 			.with_safe_default_protocol_versions()?
-			.with_root_certificates(TLS_SERVER_ROOTS.iter().chain(EXTRA_TLS_SERVER_ROOTS.iter()).cloned().collect::<RootCertStore>())
+			.with_root_certificates(
+				TLS_SERVER_ROOTS
+					.iter()
+					.chain(EXTRA_TLS_SERVER_ROOTS.iter())
+					.cloned()
+					.collect::<RootCertStore>(),
+			)
 			.with_no_client_auth();
 		let client_config = Arc::new(client_config);
 
-		#[cfg(feature = "full")]
-		let h2_config = {
-			let mut h2_client_config = (*client_config).clone();
-			h2_client_config.alpn_protocols =
-				vec!["h2".as_bytes().to_vec(), "http/1.1".as_bytes().to_vec()];
-			Arc::new(h2_client_config)
+		let http_auto_config = {
+			let mut config = (*client_config).clone();
+			config.alpn_protocols = vec!["http/1.1".as_bytes().to_vec()];
+
+			#[cfg(feature = "full")]
+			config.alpn_protocols.insert(0, "h2".as_bytes().to_vec());
+
+			Arc::new(config)
 		};
 
-		#[cfg(not(feature = "full"))]
-		let h2_config = client_config.clone();
+		let http_h1_config = {
+			let mut config = (*client_config).clone();
+			config.alpn_protocols = vec!["http/1.1".as_bytes().to_vec()];
+			Arc::new(config)
+		};
 
 		Ok(Self {
 			service,
-			h2_config,
+			http_auto_config,
+			http_h1_config,
 			client_config,
 		})
 	}
@@ -175,14 +201,17 @@ impl StreamProvider {
 		&self,
 		host: String,
 		port: u16,
-		http: bool,
+		alpn: TlsAlpnMode,
 	) -> Result<ProviderEncryptedStream, EpoxyError> {
 		let unencrypted = self.get_stream(host.clone(), port).await?;
-		let connector = TlsConnector::from(if http {
-			self.h2_config.clone()
-		} else {
-			self.client_config.clone()
-		});
+		let connector = TlsConnector::from(
+			match alpn {
+				TlsAlpnMode::None => &self.client_config,
+				TlsAlpnMode::HttpAuto => &self.http_auto_config,
+				TlsAlpnMode::Http1Only => &self.http_h1_config,
+			}
+			.clone(),
+		);
 
 		let encrypted = connector
 			.connect(
@@ -274,7 +303,17 @@ impl HttpIo {
 }
 
 #[derive(Clone)]
-pub struct StreamProviderService(pub Arc<StreamProvider>);
+pub struct StreamProviderService(pub Arc<StreamProvider>, pub HttpVersionMode);
+
+impl StreamProviderService {
+	pub fn auto(provider: Arc<StreamProvider>) -> Self {
+		Self(provider, HttpVersionMode::Auto)
+	}
+
+	pub fn h1_only(provider: Arc<StreamProvider>) -> Self {
+		Self(provider, HttpVersionMode::Http1Only)
+	}
+}
 
 impl Service<Uri> for StreamProviderService {
 	type Response = HttpIo;
@@ -287,6 +326,7 @@ impl Service<Uri> for StreamProviderService {
 
 	fn call(&mut self, req: Uri) -> Self::Future {
 		let this = self.0.clone();
+		let mode = self.1;
 
 		Box::pin(async move {
 			let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme(None))?;
@@ -303,8 +343,16 @@ impl Service<Uri> for StreamProviderService {
 			Ok(HttpIo {
 				inner: match scheme {
 					"http" | "ws" => Either::Left(this.get_stream(host, port).await?),
-					"https" => Either::Right(this.get_tls_stream(host, port, true).await?),
-					"wss" => Either::Right(this.get_tls_stream(host, port, false).await?),
+					"https" => {
+						let alpn = match mode {
+							HttpVersionMode::Auto => TlsAlpnMode::HttpAuto,
+							HttpVersionMode::Http1Only => TlsAlpnMode::Http1Only,
+						};
+						Either::Right(this.get_tls_stream(host, port, alpn).await?)
+					}
+					"wss" => {
+						Either::Right(this.get_tls_stream(host, port, TlsAlpnMode::None).await?)
+					}
 					_ => return Err(EpoxyError::InvalidUrlScheme(Some(scheme.to_string()))),
 				},
 			})

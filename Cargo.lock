@@ -653,6 +653,7 @@ version = "3.0.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "fastwebsockets",
  "futures",
  "futures-rustls",
  "futures-util",
@@ -667,6 +668,7 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "thiserror 2.0.18",
+ "tokio",
  "tower 0.4.13",
  "tower-http",
  "tower-layer",
@@ -757,6 +759,20 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+
+[[package]]
+name = "fastwebsockets"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "305d3ba574508e27190906d11707dad683e0494e6b85eae9b044cb2734a5e422"
+dependencies = [
+ "bytes",
+ "rand 0.8.5",
+ "simdutf8",
+ "thiserror 1.0.69",
+ "tokio",
+ "utf-8",
+]
 
 [[package]]
 name = "fiat-crypto"
@@ -3719,8 +3735,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "fastwebsockets"
-version = "0.8.0"
-source = "git+https://github.com/r58Playz/fastwebsockets#1064f64add235a9295633e88d8761011c7af51d5"

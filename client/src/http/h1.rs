@@ -1,5 +1,6 @@
 //! https://github.com/hyperium/hyper-util/tree/client-http1-middleware
 //! Middleware services for normalizing request URIs and Host headers.
+#![allow(dead_code)]
 
 use std::task::{Context, Poll};
 

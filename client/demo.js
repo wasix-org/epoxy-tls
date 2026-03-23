@@ -93,7 +93,132 @@ console.log(ret);
 console.log(ret.rawHeaders);
 console.log(await ret.text());
 
-console.log(await client.fetch("https://example.com").then(r=>r.text()));
+console.log(await client.fetch("https://example.com").then((r) => r.text()));
+
+function withTimeout(promise, label, ms = 15000) {
+	return Promise.race([
+		promise,
+		new Promise((_, reject) =>
+			setTimeout(
+				() => reject(new Error(`${label} timed out after ${ms}ms`)),
+				ms
+			)
+		),
+	]);
+}
+
+function assertBytesEqual(actual, expected, message) {
+	assert(actual instanceof Uint8Array, `${message}: expected Uint8Array`);
+	assert(
+		actual.byteLength === expected.byteLength,
+		`${message}: expected ${expected.byteLength} bytes, got ${actual.byteLength}`
+	);
+	for (let i = 0; i < expected.byteLength; i++) {
+		assert(actual[i] === expected[i], `${message}: mismatch at index ${i}`);
+	}
+}
+
+async function testWebSocket() {
+	let websocketEchoCandidates = ["wss://ws.ifelse.io"];
+
+	let ws;
+	let lastErr;
+	for (let endpoint of websocketEchoCandidates) {
+		try {
+			ws = await withTimeout(
+				client.websocket(endpoint),
+				`websocket connect ${endpoint}`
+			);
+			console.log("websocket connected", endpoint);
+			break;
+		} catch (error) {
+			lastErr = error;
+			console.warn("websocket connect failed", endpoint, error);
+		}
+	}
+
+	if (!ws) {
+		throw new Error(
+			`failed to connect to any websocket echo endpoint: ${lastErr}`
+		);
+	}
+
+	assert(
+		ws.headers instanceof Headers,
+		"websocket headers is not a Headers object"
+	);
+	assert(
+		ws.headers.get("upgrade")?.toLowerCase() === "websocket",
+		`expected websocket upgrade header, got ${ws.headers.get("upgrade")}`
+	);
+	assert(
+		typeof ws.rawHeaders === "object" && ws.rawHeaders !== null,
+		"websocket rawHeaders missing"
+	);
+
+	let textPayload = `epoxy websocket test ${Date.now()}`;
+	let binaryPayload = new Uint8Array([0, 1, 2, 3, 4, 5, 254, 255]);
+
+	let writer = ws.writable.getWriter();
+	let reader = ws.readable.getReader();
+
+	await withTimeout(writer.write(textPayload), "websocket text write");
+	await withTimeout(writer.write(binaryPayload), "websocket binary write");
+
+	let gotTextEcho = false;
+	let gotBinaryEcho = false;
+	let seenMessages = [];
+	let start = Date.now();
+	while ((!gotTextEcho || !gotBinaryEcho) && Date.now() - start < 12000) {
+		let { done, value } = await withTimeout(
+			reader.read(),
+			"websocket echo read",
+			4000
+		);
+		if (done) {
+			throw new Error("websocket stream closed before receiving echo payloads");
+		}
+
+		if (typeof value === "string") {
+			seenMessages.push(value);
+			if (value === textPayload) {
+				gotTextEcho = true;
+			}
+		} else if (value instanceof Uint8Array) {
+			seenMessages.push(`binary:${value.byteLength}`);
+			if (value.byteLength === binaryPayload.byteLength) {
+				assertBytesEqual(
+					value,
+					binaryPayload,
+					"websocket binary echo mismatch"
+				);
+				gotBinaryEcho = true;
+			}
+		}
+	}
+
+	assert(
+		gotTextEcho,
+		`websocket text echo not received (seen: ${JSON.stringify(seenMessages)})`
+	);
+	assert(
+		gotBinaryEcho,
+		`websocket binary echo not received (seen: ${JSON.stringify(seenMessages)})`
+	);
+	console.log("websocket echo ok", {
+		text: gotTextEcho,
+		binary: gotBinaryEcho,
+	});
+
+	reader.releaseLock();
+	writer.releaseLock();
+
+	ws.close({ closeCode: 1000, reason: "demo done" });
+	let closeInfo = await withTimeout(ws.closed, "websocket close", 5000);
+	console.log("websocket close", closeInfo);
+}
+
+await testWebSocket();
 
 async function sendTest(read, write, log, data) {
 	let j = (x) => JSON.stringify(x);

@@ -10,6 +10,7 @@ use wisp_mux::WispError;
 mod client;
 mod http;
 mod provider;
+mod websocket;
 
 mod js_socket;
 mod js_types;
@@ -75,6 +76,15 @@ pub enum EpoxyError {
 	TooManyRedirects,
 	#[error("Aborted")]
 	Aborted,
+
+	#[error("WS: Invalid status code {0}")]
+	WsStatusCode(::http::StatusCode),
+	#[error("WS: Missing Upgrade: websocket")]
+	WsMissingUpgrade,
+	#[error("WS: Missing Connection: Upgrade")]
+	WsMissingConnection,
+	#[error("WS: Invalid protocol \"{}\"", fmt_option(.0))]
+	WsProtocol(Option<String>),
 
 	#[error("JS: invalid value: {0}")]
 	InvalidJsValue(String),
