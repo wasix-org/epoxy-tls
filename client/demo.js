@@ -228,14 +228,22 @@ async function sendTest(read, write, log, data) {
 	let decoder = new TextDecoder();
 	let received = "";
 	let got = false;
-	for await (let chunk of read) {
-		let decoded = decoder.decode(chunk, { stream: true });
-		received += decoded;
-		console.log(`decoded ${j(decoded)} over ${log}`);
-		if (received.includes(data)) {
-			got = true;
-			break;
+	let reader = read.getReader();
+	try {
+		while (true) {
+			let { done, value: chunk } = await reader.read();
+			if (done) break;
+
+			let decoded = decoder.decode(chunk, { stream: true });
+			received += decoded;
+			console.log(`decoded ${j(decoded)} over ${log}`);
+			if (received.includes(data)) {
+				got = true;
+				break;
+			}
 		}
+	} finally {
+		reader.releaseLock();
 	}
 	if (!got)
 		throw new Error(

@@ -256,6 +256,7 @@ function normalizeRequest(
 			: resource instanceof Request
 				? resource.method
 				: undefined,
+		duplex: "half"
 	};
 	if (!hasInitBody) {
 		delete browserInit.body;

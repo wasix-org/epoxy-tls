@@ -18,23 +18,6 @@ mod handles;
 pub use compat::*;
 pub use handles::*;
 
-macro_rules! unlock_some {
-	($unlock:expr, $x:expr) => {
-		if let Err(err) = $x {
-			$unlock.unlock();
-			return Poll::Ready(Some(Err(err)));
-		}
-	};
-}
-macro_rules! unlock {
-	($unlock:expr, $x:expr) => {
-		if let Err(err) = $x {
-			$unlock.unlock();
-			return Poll::Ready(Err(err));
-		}
-	};
-}
-
 pub struct MuxStreamRead<W: TransportWrite> {
 	inner: flume::r#async::RecvStream<'static, Payload>,
 	write: LockedWebSocketWrite<W>,
@@ -110,11 +93,16 @@ impl<W: TransportWrite> Stream for MuxStreamRead<W> {
 
 			if self.read_cnt > self.info.target_flow_control {
 				ready!(self.write.poll_lock(cx));
-				unlock_some!(self.write, ready!(self.write.get().poll_ready(cx)));
+				let mut handle = self.write.get_handle();
+				if let Err(err) = ready!(handle.poll_ready_unpin(cx)) {
+					return Poll::Ready(Some(Err(err)));
+				}
+
 				let pkt =
 					Packet::new_continue(self.info.id, self.info.flow_add(self.read_cnt)).encode();
-				unlock_some!(self.write, self.write.get().start_send(pkt));
-				self.write.unlock();
+				if let Err(err) = handle.start_send_unpin(pkt) {
+					return Poll::Ready(Some(Err(err)));
+				}
 
 				self.read_cnt = 0;
 			}
@@ -197,18 +185,6 @@ impl<W: TransportWrite> MuxStreamWrite<W> {
 		MuxStreamAsyncWrite::new(self)
 	}
 
-	fn maybe_write(&mut self) -> Result<(), WispError> {
-		if let Some(chunk) = self.chunk.take() {
-			let packet = Packet::new_data(self.info.id, chunk).encode();
-			self.write.get().start_send(packet)?;
-
-			if self.info.flow_status == FlowControl::EnabledTrackAmount {
-				self.info.flow_dec();
-			}
-		}
-
-		Ok(())
-	}
 }
 
 impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
@@ -226,9 +202,17 @@ impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 
 		if self.chunk.is_some() {
 			ready!(self.write.poll_lock(cx));
-			unlock!(self.write, ready!(self.write.get().poll_ready(cx)));
-			unlock!(self.write, self.maybe_write());
-			self.write.unlock();
+			let mut handle = self.write.get_handle();
+			ready!(handle.poll_ready_unpin(cx))?;
+
+			if let Some(chunk) = self.chunk.take() {
+				let packet = Packet::new_data(self.info.id, chunk).encode();
+				handle.start_send_unpin(packet)?;
+
+				if self.info.flow_status == FlowControl::EnabledTrackAmount {
+					self.info.flow_dec();
+				}
+			}
 		}
 
 		Poll::Ready(Ok(()))
@@ -243,14 +227,22 @@ impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 
 	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
 		ready!(self.write.poll_lock(cx));
+		let mut handle = self.write.get_handle();
 
 		if self.chunk.is_some() {
-			unlock!(self.write, ready!(self.write.get().poll_ready(cx)));
-			unlock!(self.write, self.maybe_write());
-		}
-		unlock!(self.write, ready!(self.write.get().poll_flush(cx)));
+			ready!(handle.poll_ready_unpin(cx))?;
 
-		self.write.unlock();
+			if let Some(chunk) = self.chunk.take() {
+				let packet = Packet::new_data(self.info.id, chunk).encode();
+				handle.start_send_unpin(packet)?;
+
+				if self.info.flow_status == FlowControl::EnabledTrackAmount {
+					self.info.flow_dec();
+				}
+			}
+		}
+
+		ready!(handle.poll_flush_unpin(cx))?;
 		Poll::Ready(Ok(()))
 	}
 

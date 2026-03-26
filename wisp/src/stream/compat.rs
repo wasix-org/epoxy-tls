@@ -105,23 +105,22 @@ impl<W: TransportWrite> AsyncWrite for MuxStreamAsyncWrite<W> {
 		buf: &[u8],
 	) -> Poll<io::Result<usize>> {
 		ready!(self.write.poll_lock(cx));
-		ready!(self.write.get().poll_flush(cx)).map_err(io::Error::other)?;
-		ready!(self.write.get().poll_ready(cx)).map_err(io::Error::other)?;
+		let mut handle = self.write.get_handle();
+
+		ready!(handle.poll_flush_unpin(cx)).map_err(io::Error::other)?;
+		ready!(handle.poll_ready_unpin(cx)).map_err(io::Error::other)?;
 
 		let packet = Packet::new_data(self.info.id, buf);
-		self.write
-			.get()
-			.start_send(packet.encode())
+		handle
+			.start_send_unpin(packet.encode())
 			.map_err(io::Error::other)?;
-
-		self.write.unlock();
 		Poll::Ready(Ok(buf.len()))
 	}
 
 	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
 		ready!(self.write.poll_lock(cx));
-		ready!(self.write.get().poll_flush(cx)).map_err(io::Error::other)?;
-		self.write.unlock();
+		let mut handle = self.write.get_handle();
+		ready!(handle.poll_flush_unpin(cx)).map_err(io::Error::other)?;
 		Poll::Ready(Ok(()))
 	}
 
