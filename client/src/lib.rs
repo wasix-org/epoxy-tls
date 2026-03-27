@@ -2,6 +2,7 @@
 #![feature(type_alias_impl_trait)]
 
 use core::convert::Into;
+use std::{error::Error as StdError, io};
 
 use futures_rustls::rustls;
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
@@ -33,6 +34,8 @@ fn fmt_option(option: &Option<String>) -> &str {
 	}
 }
 
+pub(crate) type EpoxyBoxError = Box<dyn StdError + Send + Sync + 'static>;
+
 #[wasm_bindgen(inline_js = r#"
 class EpoxyError extends Error {}
 export let EpoxyError_new = (msg) => new EpoxyError(msg);
@@ -53,6 +56,8 @@ pub enum EpoxyError {
 	Hyper(#[from] hyper::Error),
 	#[error("HTTP: {0}")]
 	Http(#[from] hyper::http::Error),
+	#[error("UNKNOWN ERROR (add dedicated EpoxyError variant): {0}")]
+	Unknown(#[source] EpoxyBoxError),
 
 	#[error(transparent)]
 	InvalidMethod(#[from] ::http::method::InvalidMethod),
@@ -100,6 +105,51 @@ pub enum EpoxyError {
 impl EpoxyError {
 	pub fn js_error(val: impl Into<JsValue>) -> Self {
 		EpoxyError::JsError(jsval_debug(val))
+	}
+
+	pub(crate) fn from_box_error(err: EpoxyBoxError) -> Self {
+		let err = match err.downcast::<Self>() {
+			Ok(err) => return *err,
+			Err(err) => err,
+		};
+
+		let err = match err.downcast::<io::Error>() {
+			Ok(err) => return (*err).into(),
+			Err(err) => err,
+		};
+
+		let err = match err.downcast::<hyper::Error>() {
+			Ok(err) => return (*err).into(),
+			Err(err) => err,
+		};
+
+		let err = match err.downcast::<hyper::http::Error>() {
+			Ok(err) => return (*err).into(),
+			Err(err) => err,
+		};
+
+		if let Some(err) = Self::find_source::<io::Error>(&*err) {
+			return io::Error::new(err.kind(), err.to_string()).into();
+		}
+
+		Self::Unknown(err)
+	}
+
+	fn find_source<'a, T>(err: &'a (dyn StdError + 'static)) -> Option<&'a T>
+	where
+		T: StdError + 'static,
+	{
+		if let Some(err) = err.downcast_ref::<T>() {
+			return Some(err);
+		}
+
+		err.source().and_then(Self::find_source::<T>)
+	}
+}
+
+impl From<EpoxyBoxError> for EpoxyError {
+	fn from(value: EpoxyBoxError) -> Self {
+		Self::from_box_error(value)
 	}
 }
 

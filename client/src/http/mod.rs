@@ -1,7 +1,5 @@
 use std::{
-	error::Error as StdError,
 	future::Future,
-	io,
 	pin::Pin,
 	sync::Arc,
 	task::{Context, Poll},
@@ -29,7 +27,6 @@ use crate::{
 };
 
 mod conn;
-mod decomp;
 mod h1;
 
 #[derive(Clone)]
@@ -163,7 +160,7 @@ impl Clone for EpoxyBody {
 	}
 }
 
-pub(super) type BoxError = Box<dyn StdError + Send + Sync + 'static>;
+pub(super) type BoxError = crate::EpoxyBoxError;
 
 type OriginKey = (Option<http::uri::Scheme>, Option<http::uri::Authority>);
 
@@ -255,8 +252,8 @@ fn build_origin_service(
 		.upgrade(http2)
 		.build::<Uri>();
 
-	pool.map_response(|client| client.map_err(pool_error))
-		.map_err(|x| pool_error(x.into()))
+	pool.map_response(|client| client.map_err(EpoxyError::from_box_error))
+		.map_err(|x| EpoxyError::from_box_error(x.into()))
 }
 
 #[define_opaque(OriginServiceRet)]
@@ -270,47 +267,8 @@ fn build_origin_service(
 	Future = impl Future<Output = Result<OriginServiceRet, EpoxyError>>,
 > + Clone {
 	h1_pool_layer(provider.map_err(|x| Box::new(x) as BoxError))
-		.map_response(|client| client.map_err(pool_error))
-		.map_err(pool_error)
-}
-
-fn pool_error(err: BoxError) -> EpoxyError {
-	let err = match err.downcast::<EpoxyError>() {
-		Ok(err) => return *err,
-		Err(err) => err,
-	};
-
-	let err = match err.downcast::<io::Error>() {
-		Ok(err) => return EpoxyError::from(*err),
-		Err(err) => err,
-	};
-
-	let err = match err.downcast::<hyper::Error>() {
-		Ok(err) => return EpoxyError::from(*err),
-		Err(err) => err,
-	};
-
-	let err = match err.downcast::<hyper::http::Error>() {
-		Ok(err) => return EpoxyError::from(*err),
-		Err(err) => err,
-	};
-
-	if let Some(err) = find_source::<io::Error>(&*err) {
-		return io::Error::new(err.kind(), err.to_string()).into();
-	}
-
-	io::Error::other(err.to_string()).into()
-}
-
-fn find_source<'a, T>(err: &'a (dyn StdError + 'static)) -> Option<&'a T>
-where
-	T: StdError + 'static,
-{
-	if let Some(err) = err.downcast_ref::<T>() {
-		return Some(err);
-	}
-
-	err.source().and_then(find_source::<T>)
+		.map_response(|client| client.map_err(EpoxyError::from_box_error))
+		.map_err(EpoxyError::from_box_error)
 }
 
 fn scheme_and_auth(uri: &Uri) -> OriginKey {

@@ -1,17 +1,18 @@
 use std::{borrow::Cow, convert::Infallible, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use bytes::Bytes;
 use futures::{
 	AsyncReadExt, TryStreamExt,
 	stream::{AbortHandle, Abortable},
 };
 use http::{
-	HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri, Version, header, request,
-	response,
+	HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
+	header, request, response,
 };
+use http_body::Body;
 use http_body_util::BodyExt;
 use hyper::{
-	body::Incoming,
 	ext::{HeaderCaseMap, ReasonPhrase},
 	upgrade,
 };
@@ -19,6 +20,7 @@ use js_sys::{Array, Uint8Array};
 use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, digest};
 use tower::{Service, ServiceBuilder, ServiceExt};
 use tower_http::{
+	decompression::DecompressionLayer,
 	follow_redirect::{self, FollowRedirectLayer, RequestUri},
 	set_header::SetRequestHeaderLayer,
 };
@@ -30,7 +32,7 @@ use web_sys::AbortSignal;
 
 use crate::{
 	EpoxyError, EpoxyJsValErrorExt,
-	http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
+	http::{BoxError, EpoxyBody, HyperClient, HyperRequest, build_hyper_client},
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	js_types::RawHeaders,
 	provider::{StreamProvider, StreamProviderService, TlsAlpnMode, service::WasmProvider},
@@ -182,7 +184,7 @@ pub struct ClientResponse {
 	uri: Option<Uri>,
 	headers: Option<HeaderMap>,
 	header_case: Option<HeaderCaseMap>,
-	body: Option<Incoming>,
+	body: Option<HyperResponseBody>,
 }
 #[wasm_bindgen]
 impl ClientResponse {
@@ -232,11 +234,13 @@ impl ClientResponse {
 		wasm_streams::ReadableStream::from_stream(
 			body.into_data_stream()
 				.map_ok(|x| Uint8Array::new_from_slice(&x).into())
-				.map_err(|x| EpoxyError::from(x).into()),
+				.map_err(|x| EpoxyError::from_box_error(x).into()),
 		)
 		.into_raw()
 	}
 }
+
+type HyperResponseBody = impl Body<Data = Bytes, Error = BoxError>;
 
 #[wasm_bindgen]
 pub struct Client {
@@ -248,11 +252,12 @@ pub struct Client {
 
 #[wasm_bindgen]
 impl Client {
+	#[define_opaque(HyperResponseBody)]
 	fn build_client(
 		&self,
 		redirect: Redirect,
 		h1_only: bool,
-	) -> impl Service<HyperRequest, Response = HyperResponse, Error = EpoxyError> {
+	) -> impl Service<HyperRequest, Response = Response<HyperResponseBody>, Error = EpoxyError> {
 		let hyper = if h1_only {
 			self.hyper_h1.clone()
 		} else {
@@ -269,6 +274,7 @@ impl Client {
 				header::USER_AGENT,
 				self.ua.clone(),
 			))
+			.layer(DecompressionLayer::new())
 			.service(hyper)
 	}
 
