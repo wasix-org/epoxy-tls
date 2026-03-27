@@ -35,6 +35,7 @@ async-trait = "0.1.89"
 tower-http = { version = "0.6.8", features = ["follow-redirect", "set-header", "util"] }
 fastwebsockets = { version = "0.10.0", features = ["unstable-split"] }
 tokio = { version = "1.50.0", features = ["io-util"] }
+base64 = "0.22.1"
 
 [features]
 default = ["extended"]

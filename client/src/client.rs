@@ -1,5 +1,6 @@
 use std::{borrow::Cow, convert::Infallible, sync::Arc};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use futures::{
 	AsyncReadExt, TryStreamExt,
 	stream::{AbortHandle, Abortable},
@@ -15,6 +16,7 @@ use hyper::{
 	upgrade,
 };
 use js_sys::{Array, Uint8Array};
+use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, digest};
 use tower::{Service, ServiceBuilder, ServiceExt};
 use tower_http::{
 	follow_redirect::{self, FollowRedirectLayer, RequestUri},
@@ -27,7 +29,7 @@ use wasm_bindgen::{
 use web_sys::AbortSignal;
 
 use crate::{
-	EpoxyError,
+	EpoxyError, EpoxyJsValErrorExt,
 	http::{EpoxyBody, HyperClient, HyperRequest, HyperResponse, build_hyper_client},
 	js_socket::{JsSocket, create_asyncread_js_socket},
 	js_types::RawHeaders,
@@ -44,6 +46,27 @@ export function ws_key() {
 ")]
 extern "C" {
 	pub fn ws_key() -> String;
+}
+
+const SEC_WEBSOCKET_ACCEPT_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+fn trim_http_spaces(input: &str) -> &str {
+	input.trim_matches(|x| x == ' ' || x == '\t')
+}
+
+fn header_contains_token(value: &str, expected: &str) -> bool {
+	value
+		.split(',')
+		.any(|x| trim_http_spaces(x).eq_ignore_ascii_case(expected))
+}
+
+fn websocket_accept_value(key: &str) -> String {
+	let mut bytes = Vec::with_capacity(key.len() + SEC_WEBSOCKET_ACCEPT_GUID.len());
+	bytes.extend_from_slice(trim_http_spaces(key).as_bytes());
+	bytes.extend_from_slice(SEC_WEBSOCKET_ACCEPT_GUID.as_bytes());
+
+	let digest = digest(&SHA1_FOR_LEGACY_USE_ONLY, &bytes);
+	BASE64_STANDARD.encode(digest)
 }
 
 #[wasm_bindgen]
@@ -92,7 +115,7 @@ impl follow_redirect::policy::Policy<EpoxyBody, EpoxyError> for RedirectPolicy {
 				}
 			}
 			Self::Manual => Ok(follow_redirect::policy::Action::Stop),
-			Self::Error => Err(EpoxyError::TooManyRedirects),
+			Self::Error => Err(EpoxyError::RedirectDisallowed),
 		}
 	}
 
@@ -320,10 +343,20 @@ impl Client {
 		length: Option<u64>,
 	) -> Result<ClientResponse, EpoxyError> {
 		let (handle, reg) = AbortHandle::new_pair();
-		let closure = Closure::<dyn Fn()>::new(move || handle.abort());
-		abort.set_onabort(Some(closure.as_ref().unchecked_ref()));
+		let on_abort_handle = handle.clone();
+		let closure = Closure::<dyn FnMut()>::new(move || on_abort_handle.abort());
+		abort
+			.add_event_listener_with_callback("abort", closure.as_ref().unchecked_ref())
+			.js_error()?;
+
+		if abort.aborted() {
+			handle.abort();
+		}
 
 		let ret = Abortable::new(self.__request(builder, redirect, body, length), reg).await;
+
+		let _ =
+			abort.remove_event_listener_with_callback("abort", closure.as_ref().unchecked_ref());
 
 		ret.map_err(|_| EpoxyError::Aborted).flatten()
 	}
@@ -333,6 +366,10 @@ impl Client {
 		builder: ClientReqBuilder,
 		protocols: Vec<String>,
 	) -> Result<WsUpgrade, EpoxyError> {
+		let key = ws_key();
+		let expected_accept = websocket_accept_value(&key);
+		let key = HeaderValue::try_from(key)?;
+
 		let request = builder
 			.take()
 			.version(Version::HTTP_11)
@@ -353,7 +390,7 @@ impl Client {
 			))
 			.layer(SetRequestHeaderLayer::overriding(
 				header::SEC_WEBSOCKET_KEY,
-				|_: &Request<EpoxyBody>| Some(HeaderValue::try_from(ws_key()).unwrap()),
+				|_: &Request<EpoxyBody>| Some(key.clone()),
 			))
 			.layer(SetRequestHeaderLayer::overriding(
 				header::SEC_WEBSOCKET_VERSION,
@@ -377,7 +414,7 @@ impl Client {
 			.headers
 			.get(header::CONNECTION)
 			.and_then(|x| x.to_str().ok())
-			.is_none_or(|x| !x.eq_ignore_ascii_case("upgrade"))
+			.is_none_or(|x| !header_contains_token(x, "upgrade"))
 		{
 			return Err(EpoxyError::WsMissingConnection);
 		}
@@ -385,24 +422,42 @@ impl Client {
 			.headers
 			.get(header::UPGRADE)
 			.and_then(|x| x.to_str().ok())
-			.is_none_or(|x| !x.eq_ignore_ascii_case("websocket"))
+			.is_none_or(|x| !header_contains_token(x, "websocket"))
 		{
 			return Err(EpoxyError::WsMissingUpgrade);
 		}
-		if !protocols.is_empty() {
-			let protocol_header = parts
-				.headers
-				.get(header::SEC_WEBSOCKET_PROTOCOL)
-				.and_then(|x| x.to_str().ok());
 
-			if protocol_header.is_none_or(|x| !protocols.iter().any(|y| x == y)) {
+		if parts.headers.contains_key(header::SEC_WEBSOCKET_EXTENSIONS) {
+			return Err(EpoxyError::WsUnexpectedExtensions);
+		}
+
+		let protocol_header = parts
+			.headers
+			.get(header::SEC_WEBSOCKET_PROTOCOL)
+			.and_then(|x| x.to_str().ok())
+			.map(trim_http_spaces);
+
+		if protocols.is_empty() {
+			if protocol_header.is_some() {
 				return Err(EpoxyError::WsProtocol(
 					protocol_header.map(ToString::to_string),
 				));
 			}
+		} else if protocol_header.is_none_or(|x| !protocols.iter().any(|y| x == y)) {
+			return Err(EpoxyError::WsProtocol(
+				protocol_header.map(ToString::to_string),
+			));
 		}
 
-		// TODO check sec-websocket-accept
+		let accept_header = parts
+			.headers
+			.get(header::SEC_WEBSOCKET_ACCEPT)
+			.and_then(|x| x.to_str().ok())
+			.map(trim_http_spaces);
+
+		if accept_header.is_none_or(|x| x != expected_accept.as_str()) {
+			return Err(EpoxyError::WsAccept(accept_header.map(ToString::to_string)));
+		}
 
 		let res = ClientResponse {
 			status: Some(parts.status),

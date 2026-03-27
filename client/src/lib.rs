@@ -74,6 +74,8 @@ pub enum EpoxyError {
 
 	#[error("Too many redirects")]
 	TooManyRedirects,
+	#[error("Redirect disallowed")]
+	RedirectDisallowed,
 	#[error("Aborted")]
 	Aborted,
 
@@ -83,6 +85,10 @@ pub enum EpoxyError {
 	WsMissingUpgrade,
 	#[error("WS: Missing Connection: Upgrade")]
 	WsMissingConnection,
+	#[error("WS: Invalid Sec-WebSocket-Accept \"{}\"", fmt_option(.0))]
+	WsAccept(Option<String>),
+	#[error("WS: Unexpected Sec-WebSocket-Extensions")]
+	WsUnexpectedExtensions,
 	#[error("WS: Invalid protocol \"{}\"", fmt_option(.0))]
 	WsProtocol(Option<String>),
 

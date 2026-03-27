@@ -256,7 +256,7 @@ function normalizeRequest(
 			: resource instanceof Request
 				? resource.method
 				: undefined,
-		duplex: "half"
+		duplex: "half",
 	};
 	if (!hasInitBody) {
 		delete browserInit.body;
@@ -329,7 +329,17 @@ export class EpoxyClient {
 			string,
 			Uint8Array<ArrayBufferLike>,
 		][];
-		let body = ret.body();
+		let method = normalized.method.toUpperCase();
+		let body =
+			status === 101 ||
+			status === 103 ||
+			status === 204 ||
+			status === 205 ||
+			status === 304 ||
+			method === "HEAD" ||
+			method === "CONNECT"
+				? null
+				: ret.body();
 
 		let { headers, rawHeaders } = decodeRawHeaders(rawRawHeaders);
 
@@ -357,11 +367,7 @@ export class EpoxyClient {
 			request.header(header, value);
 		}
 
-		let ret = (await this.client.upgrade_ws(request, normalized.protocols)) as [
-			{ headers(): [string, Uint8Array<ArrayBufferLike>][] },
-			ReadableStream<WsReadEvent>,
-			WritableStream<WsWriteEvent>,
-		];
+		let ret = await this.client.upgrade_ws(request, normalized.protocols);
 
 		let rawRawHeaders = ret[0].headers();
 		let { headers, rawHeaders } = decodeRawHeaders(rawRawHeaders);
