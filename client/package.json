@@ -12,6 +12,13 @@
 		"https",
 		"websocket"
 	],
+	"files": [
+		"dist/",
+		"epoxy_wasm.d.ts",
+		"epoxy_wasm_module.d.ts",
+		"LICENSE",
+		"package.json"
+	],
 	"scripts": {
 		"build": "rollup -c",
 		"format": "cargo fmt && prettier -w .",
