@@ -11,6 +11,7 @@ use wisp_mux::WispError;
 mod client;
 mod http;
 mod provider;
+#[cfg(feature = "full")]
 mod websocket;
 
 mod js_socket;

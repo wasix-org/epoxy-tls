@@ -31,12 +31,15 @@ export {
 	WispExtensions,
 } from "./wispExtension";
 export { EpoxyClient } from "./client";
-export type { EpoxyResponse } from "./client";
+export type { EpoxyResponse, EpoxyRawHeaders } from "./util";
+
+/* FULL.START */
 export { EpoxyWS } from "./websocket";
 export type {
-	EpoxyRawHeaders,
 	EpoxyWSChunk,
 	EpoxyWSCloseInfo,
 	EpoxyWebSocketOptions,
 } from "./websocket";
+/* FULL.END */
+
 export let version = { package: epxVersion.version, git: epxVersion.git };

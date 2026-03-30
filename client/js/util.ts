@@ -8,3 +8,6 @@ export function decode(buf: Uint8Array): string {
 export function encode(buf: string): Uint8Array {
 	return encoder.encode(buf);
 }
+
+export type EpoxyRawHeaders = Record<string, string[]>;
+export type EpoxyResponse = Response & { rawHeaders: EpoxyRawHeaders };

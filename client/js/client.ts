@@ -1,8 +1,9 @@
 import { Client, ClientReqBuilder, JsSocket, Redirect } from "epoxy/wbg";
-import { type WsReadEvent, type WsWriteEvent } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
-import { decode, encode } from "./util";
-import { EpoxyWS, EpoxyWebSocketOptions, EpoxyRawHeaders } from "./websocket";
+import { decode, encode, EpoxyResponse, EpoxyRawHeaders } from "./util";
+
+/* FULL.START */
+import { EpoxyWS, EpoxyWebSocketOptions } from "./websocket"; /* FULL.END */
 
 interface NormalizedRequest {
 	uri: string;
@@ -19,8 +20,6 @@ interface NormalizedWebSocketRequest {
 	headers: [string, string][];
 	protocols: string[];
 }
-
-export type EpoxyResponse = Response & { rawHeaders: EpoxyRawHeaders };
 
 function normalizeRedirect(redirect: RequestRedirect): Redirect {
 	switch (redirect) {
@@ -285,12 +284,13 @@ function normalizeRequest(
 let defaultUA =
 	globalThis?.navigator?.userAgent ||
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+let defaultRedirectLimit = 20;
 export class EpoxyClient {
 	// @internal
 	client: Client;
 
-	constructor(provider: SocketProvider) {
-		this.client = new Client(provider.provider, defaultUA);
+	constructor(provider: SocketProvider, redirectLimit = defaultRedirectLimit) {
+		this.client = new Client(provider.provider, redirectLimit, defaultUA);
 	}
 
 	get userAgent(): string {
@@ -354,6 +354,7 @@ export class EpoxyClient {
 		return res;
 	}
 
+	/* FULL.START */
 	async websocket(
 		resource: string | URL,
 		options: EpoxyWebSocketOptions = {}
@@ -375,6 +376,7 @@ export class EpoxyClient {
 
 		return new EpoxyWS(ret[1], ret[2], protocol, headers, rawHeaders);
 	}
+	/* FULL.END */
 
 	async connect(
 		host: string,

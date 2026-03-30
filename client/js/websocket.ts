@@ -1,6 +1,6 @@
 import { WsWriteEvent, type WsReadEvent } from "epoxy/wbg";
+import { EpoxyRawHeaders } from "./util";
 
-export type EpoxyRawHeaders = Record<string, string[]>;
 export type EpoxyWSChunk = string | Uint8Array<ArrayBufferLike>;
 
 export interface EpoxyWSCloseInfo {

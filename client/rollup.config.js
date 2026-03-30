@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn, exec as processExec } from "node:child_process";
 import process from "node:process";
 
+import MagicString from "magic-string";
 import terser from "@rollup/plugin-terser";
 import typescript from "@rollup/plugin-typescript";
 import dts from "rollup-plugin-dts";
@@ -217,6 +218,22 @@ const rustFallback = {
 	},
 };
 
+const stripBetweenComments = (startComment, endComment) => ({
+	name: "stripBetweenComments",
+	transform(source) {
+		let code = new MagicString(source);
+		const pattern = new RegExp(
+			`([\\t ]*\\/\\* ?${startComment} ?\\*\\/)[\\s\\S]*?(\\/\\* ?${endComment} ?\\*\\/[\\t ]*\\n?)`,
+			"g"
+		);
+		code.replace(pattern, "");
+		return {
+			code: code.toString(),
+			map: code.generateMap({ hires: true }),
+		};
+	},
+});
+
 const common = (include, bundleWasm) => [
 	nodeResolve(),
 	wasm({
@@ -257,7 +274,7 @@ const cfg = (inputDir, inputFile, output, defs, bundleWasm, plugins) => {
 			input,
 			output: [{ file: output, sourcemap: true, format: "es" }],
 			plugins: [
-				common(inputDir, bundleWasm),
+				...common(inputDir, bundleWasm),
 				...plugins,
 				versionInfo,
 				rustFallback,
@@ -300,7 +317,15 @@ export default async (args) => {
 	];
 
 	const outputs = [];
-	for (let profile of profiles) {
+	for (let [i, profile] of profiles.map((x, i) => [i, x])) {
+		let strips = profiles
+			.slice(i + 1)
+			.map((x) =>
+				stripBetweenComments(
+					`${x.toUpperCase()}.START`,
+					`${x.toUpperCase()}.END`
+				)
+			);
 		const rustPlugin = rust(profile, [profile]);
 		for (let variant of variants) {
 			outputs.push(
@@ -310,7 +335,7 @@ export default async (args) => {
 					`dist/${profile}${variant.suffix}.js`,
 					true,
 					variant.bundled,
-					[rustPlugin]
+					[rustPlugin, ...strips]
 				)
 			);
 		}

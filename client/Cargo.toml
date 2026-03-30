@@ -35,14 +35,14 @@ http = "1.3.1"
 http-body = "1.0.1"
 async-trait = "0.1.89"
 tower-http = { version = "0.6.8", features = ["decompression-br", "decompression-deflate", "decompression-gzip", "follow-redirect", "set-header", "util"] }
-fastwebsockets = { version = "0.10.0", features = ["unstable-split"] }
+fastwebsockets = { optional = true, version = "0.10.0", features = ["unstable-split"] }
 tokio = { version = "1.50.0", features = ["io-util"] }
 base64 = "0.22.1"
 
 [features]
 default = ["extended"]
 minimal = []
-full = ["hyper/http2"]
+full = ["minimal", "hyper/http2", "dep:fastwebsockets"]
 extended = ["full"]
 debug = []
 

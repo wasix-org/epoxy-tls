@@ -1,11 +1,16 @@
 use std::sync::Arc;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use fastwebsockets::{FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket};
 use futures::lock::Mutex;
+use http::{StatusCode, header, response};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use js_sys::{Object, Reflect, Uint8Array};
+use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, digest};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
+
+use crate::EpoxyError;
 
 #[wasm_bindgen(typescript_custom_section)]
 const WS_TYPES_TS: &'static str = r#"
@@ -20,6 +25,83 @@ export type WsUpgrade = [
 	WritableStream<WsWriteEvent>,
 ];
 "#;
+
+const SEC_WEBSOCKET_ACCEPT_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+fn trim_http_spaces(input: &str) -> &str {
+	input.trim_matches(|x| x == ' ' || x == '\t')
+}
+
+fn header_contains_token(value: &str, expected: &str) -> bool {
+	value
+		.split(',')
+		.any(|x| trim_http_spaces(x).eq_ignore_ascii_case(expected))
+}
+
+pub(crate) fn websocket_accept_value(key: &str) -> String {
+	let mut bytes = Vec::with_capacity(key.len() + SEC_WEBSOCKET_ACCEPT_GUID.len());
+	bytes.extend_from_slice(trim_http_spaces(key).as_bytes());
+	bytes.extend_from_slice(SEC_WEBSOCKET_ACCEPT_GUID.as_bytes());
+
+	let digest = digest(&SHA1_FOR_LEGACY_USE_ONLY, &bytes);
+	BASE64_STANDARD.encode(digest)
+}
+
+pub(crate) fn verify_upgrade_response(
+	parts: &response::Parts,
+	protocols: &[String],
+	expected_accept: &str,
+) -> Result<(), EpoxyError> {
+	if parts.status != StatusCode::SWITCHING_PROTOCOLS {
+		return Err(EpoxyError::WsStatusCode(parts.status));
+	}
+	if parts
+		.headers
+		.get(header::CONNECTION)
+		.and_then(|x| x.to_str().ok())
+		.is_none_or(|x| !header_contains_token(x, "upgrade"))
+	{
+		return Err(EpoxyError::WsMissingConnection);
+	}
+	if parts
+		.headers
+		.get(header::UPGRADE)
+		.and_then(|x| x.to_str().ok())
+		.is_none_or(|x| !header_contains_token(x, "websocket"))
+	{
+		return Err(EpoxyError::WsMissingUpgrade);
+	}
+
+	if parts.headers.contains_key(header::SEC_WEBSOCKET_EXTENSIONS) {
+		return Err(EpoxyError::WsUnexpectedExtensions);
+	}
+
+	let protocol_header = parts
+		.headers
+		.get(header::SEC_WEBSOCKET_PROTOCOL)
+		.and_then(|x| x.to_str().ok())
+		.map(trim_http_spaces);
+
+	if protocols.is_empty() {
+		if protocol_header.is_some() {
+			return Err(EpoxyError::WsProtocol(protocol_header.map(ToString::to_string)));
+		}
+	} else if protocol_header.is_none_or(|x| !protocols.iter().any(|y| x == y)) {
+		return Err(EpoxyError::WsProtocol(protocol_header.map(ToString::to_string)));
+	}
+
+	let accept_header = parts
+		.headers
+		.get(header::SEC_WEBSOCKET_ACCEPT)
+		.and_then(|x| x.to_str().ok())
+		.map(trim_http_spaces);
+
+	if accept_header.is_none_or(|x| x != expected_accept) {
+		return Err(EpoxyError::WsAccept(accept_header.map(ToString::to_string)));
+	}
+
+	Ok(())
+}
 
 enum WsWriteEv {
 	Text(String),
