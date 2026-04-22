@@ -3,6 +3,7 @@ import epxVersion from "epoxy/version";
 export {
 	JsProvider,
 	JsSocketProvider,
+	EitherSocketProvider,
 	WebSocketJsProvider,
 	WsProxyJsSocketProvider,
 	WispSocketProvider,

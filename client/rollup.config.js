@@ -18,6 +18,7 @@ const INLINE_WASM_LIMIT = 2 * 1024 * 1024;
 const WASM_BINDGEN_IMPORT_META_FALLBACK =
 	"module_or_path = new URL('epoxy_client_bg.wasm', import.meta.url);";
 let FAKED_TYPES = [
+	"EitherSocketProvider",
 	"JsProvider",
 	"WispProvider",
 	"WasmProvider",

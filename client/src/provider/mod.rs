@@ -23,6 +23,7 @@ pub mod js;
 pub mod service;
 pub mod wisp;
 
+#[derive(Clone)]
 pub struct ProviderServiceReq {
 	pub host: String,
 	pub port: u16,

@@ -1,4 +1,5 @@
 import {
+	EitherSocketProvider as EpxEitherSocketProvider,
 	JsProvider as EpxJsProvider,
 	WispProvider as EpxWispProvider,
 	JsWispV2Handshake,
@@ -151,4 +152,23 @@ export class WispSocketProvider extends Provider<
 	}
 }
 
-export type SocketProvider = JsSocketProvider | WispSocketProvider;
+export class EitherSocketProvider extends Provider<
+	EpxEitherSocketProvider,
+	WasmProvider
+> {
+	constructor(
+		selector: (host: string, port: number) => "left" | "right",
+		left: SocketProvider,
+		right: SocketProvider
+	) {
+		super(
+			new EpxEitherSocketProvider(selector, left.provider, right.provider),
+			(x) => x.box()
+		);
+	}
+}
+
+export type SocketProvider =
+	| JsSocketProvider
+	| WispSocketProvider
+	| EitherSocketProvider;

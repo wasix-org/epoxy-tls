@@ -8,6 +8,7 @@ export type RawHeaders = RawHeader[];
 export type ProviderResult = [ReadableStream<Uint8Array>, WritableStream<Uint8Array>];
 export type MaybePromise<T> = T | Promise<T>;
 export type JsProviderCallback = (...args: [host: string] | [host: string, port: number]) => MaybePromise<ProviderResult>;
+export type EitherProviderSelector = (host: string, port: number) => "left" | "right";
 
 export type WispRole = "client" | "server";
 export type JsProtocolExtensionBuilderFromBytes = (bytes: Uint8Array, role: WispRole) => JsProtocolExtension;
@@ -28,6 +29,9 @@ extern "C" {
 
 	#[wasm_bindgen(typescript_type = "JsProviderCallback")]
 	pub type JsProviderCallback;
+
+	#[wasm_bindgen(typescript_type = "EitherProviderSelector")]
+	pub type EitherProviderSelector;
 
 	#[wasm_bindgen(typescript_type = "JsProtocolExtensionBuilderFromBytes")]
 	pub type JsProtocolExtensionBuilderFromBytes;

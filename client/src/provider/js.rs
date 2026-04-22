@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use js_sys::{Array, Function, Promise, Uint8Array};
@@ -8,7 +10,7 @@ use wisp_mux::WispError;
 
 use crate::{
 	EpoxyError, EpoxyJsValErrorExt,
-	js_types::JsProviderCallback,
+	js_types::{EitherProviderSelector, JsProviderCallback},
 	jsval_debug,
 	provider::service::{BoxProviderService, WasmProvider, WasmWispProvider},
 	send_wrapper::SendWrapper,
@@ -23,6 +25,13 @@ use super::{
 #[wasm_bindgen]
 pub struct JsProvider {
 	provider: SendWrapper<Function>,
+}
+
+#[wasm_bindgen]
+pub struct EitherSocketProvider {
+	selector: SendWrapper<Function>,
+	left: Arc<BoxProviderService<ProviderServiceReq, ProviderUnencryptedStream, EpoxyError>>,
+	right: Arc<BoxProviderService<ProviderServiceReq, ProviderUnencryptedStream, EpoxyError>>,
 }
 
 #[wasm_bindgen]
@@ -52,6 +61,50 @@ impl JsProvider {
 		let write = WritableStream::from_raw(arr.get(1).dyn_into().js_invalid()?);
 
 		Ok((read, write))
+	}
+}
+
+#[wasm_bindgen]
+impl EitherSocketProvider {
+	#[wasm_bindgen(constructor)]
+	pub fn new(
+		selector: EitherProviderSelector,
+		left: WasmProvider,
+		right: WasmProvider,
+	) -> Self {
+		Self {
+			selector: SendWrapper(selector.unchecked_into()),
+			left: Arc::new(left.0),
+			right: Arc::new(right.0),
+		}
+	}
+
+	pub fn r#box(self) -> WasmProvider {
+		WasmProvider(BoxProviderService::new(self))
+	}
+}
+
+impl ProviderService<ProviderServiceReq> for EitherSocketProvider {
+	type Response = ProviderUnencryptedStream;
+	type Error = EpoxyError;
+	type Future = impl Future<Output = Result<Self::Response, Self::Error>> + Send;
+
+	fn call(&self, request: ProviderServiceReq) -> Self::Future {
+		let branch = self
+			.selector
+			.0
+			.call2(&JsValue::NULL, &request.host.clone().into(), &request.port.into());
+
+		let service = match branch {
+			Ok(branch) => match branch.as_string().as_deref() {
+				Some("left") => Ok(self.left.clone()),
+				Some("right") => Ok(self.right.clone()),
+				_ => Err(EpoxyError::InvalidJsValue(jsval_debug(branch))),
+			},
+			Err(err) => Err(EpoxyError::js_error(err)),
+		};
+
+		SendWrapper(async move { service?.call(request).await })
 	}
 }
 
