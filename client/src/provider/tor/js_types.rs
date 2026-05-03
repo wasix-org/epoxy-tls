@@ -7,11 +7,28 @@ export type TorStateMgrCallbacks = {
 	store: (key: string, value: string) => void;
 };
 
-export type TorBackendSelector = (() => "snowflake") | unknown;
+export type TorBootstrapBlockage = {
+	kind: string;
+	message: string;
+};
+export type TorBootstrapProgress = {
+	/** 0–1, rough progress estimate. */
+	frac: number;
+	/** True once the client can serve traffic. */
+	ready: boolean;
+	/** Human-readable status string (don't parse this). */
+	description: string;
+	/** Set when the client is stuck; `null` otherwise. */
+	blocked: TorBootstrapBlockage | null;
+};
+export type TorBootstrapCallback = (progress: TorBootstrapProgress) => void;
 "#;
 
 #[wasm_bindgen]
 extern "C" {
 	#[wasm_bindgen(typescript_type = "TorStateMgrCallbacks")]
 	pub type JsStateMgrCallbacks;
+
+	#[wasm_bindgen(typescript_type = "TorBootstrapCallback")]
+	pub type JsBootstrapCallback;
 }

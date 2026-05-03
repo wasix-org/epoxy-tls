@@ -46,6 +46,8 @@ let FAKED_TYPES = [
 	"WsWriteEvent",
 	"TorSocketProvider",
 	"TorStateMgrCallbacks",
+	"TorBootstrapCallback",
+	"TorBootstrapProgress",
 ];
 const rustBuildCache = new Map();
 

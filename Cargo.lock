@@ -188,7 +188,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 [[package]]
 name = "arti-client"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -220,6 +220,8 @@ dependencies = [
  "tor-dirmgr",
  "tor-error",
  "tor-guardmgr",
+ "tor-hsclient",
+ "tor-hscrypto",
  "tor-keymgr",
  "tor-linkspec",
  "tor-llcrypto",
@@ -603,7 +605,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 [[package]]
 name = "caret"
 version = "0.9.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 
 [[package]]
 name = "cc"
@@ -1592,18 +1594,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fallible-iterator"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
-
-[[package]]
-name = "fallible-streaming-iterator"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
-
-[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1710,12 +1700,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "foldhash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
-
-[[package]]
 name = "foreign-types"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1742,7 +1726,7 @@ dependencies = [
 [[package]]
 name = "fs-mistrust"
 version = "0.14.1"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive_builder_fork_arti",
  "dirs",
@@ -2000,7 +1984,7 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "foldhash 0.1.5",
+ "foldhash",
 ]
 
 [[package]]
@@ -2008,18 +1992,6 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
-dependencies = [
- "foldhash 0.2.0",
-]
-
-[[package]]
-name = "hashlink"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
-dependencies = [
- "hashbrown 0.16.1",
-]
 
 [[package]]
 name = "hdrhistogram"
@@ -2662,16 +2634,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libsqlite3-sys"
-version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
-dependencies = [
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
 name = "libz-sys"
 version = "1.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3035,7 +2997,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "oneshot-fused-workaround"
 version = "0.6.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "futures",
 ]
@@ -3670,7 +3632,7 @@ checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 [[package]]
 name = "retry-error"
 version = "0.12.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "humantime",
  "web-time",
@@ -3719,32 +3681,6 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "rsqlite-vfs"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8a1f2315036ef6b1fbacd1972e8ee7688030b0a2121edfc2a6550febd41574d"
-dependencies = [
- "hashbrown 0.16.1",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "rusqlite"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
-dependencies = [
- "bitflags 2.11.0",
- "fallible-iterator",
- "fallible-streaming-iterator",
- "hashlink",
- "libsqlite3-sys",
- "smallvec",
- "sqlite-wasm-rs",
- "time",
 ]
 
 [[package]]
@@ -3857,7 +3793,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "safelog"
 version = "0.8.1"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive_more",
  "educe",
@@ -4263,7 +4199,7 @@ dependencies = [
 [[package]]
 name = "slotmap-careful"
 version = "0.7.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "paste",
  "serde",
@@ -4315,18 +4251,6 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
-]
-
-[[package]]
-name = "sqlite-wasm-rs"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b2c760607300407ddeaee518acf28c795661b7108c75421303dbefb237d3a36"
-dependencies = [
- "cc",
- "js-sys",
- "rsqlite-vfs",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -4582,7 +4506,6 @@ checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
 dependencies = [
  "deranged",
  "itoa",
- "js-sys",
  "libc",
  "num-conv",
  "num_threads",
@@ -4865,7 +4788,7 @@ dependencies = [
 [[package]]
 name = "tor-async-utils"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive-deftly",
  "educe",
@@ -4880,7 +4803,7 @@ dependencies = [
 [[package]]
 name = "tor-basic-utils"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive_more",
  "getrandom 0.4.2",
@@ -4901,7 +4824,7 @@ dependencies = [
 [[package]]
 name = "tor-bytes"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "bytes",
  "derive-deftly",
@@ -4918,7 +4841,7 @@ dependencies = [
 [[package]]
 name = "tor-cell"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "bitflags 2.11.0",
@@ -4936,6 +4859,7 @@ dependencies = [
  "tor-bytes",
  "tor-cert",
  "tor-error",
+ "tor-hscrypto",
  "tor-linkspec",
  "tor-llcrypto",
  "tor-memquota",
@@ -4947,7 +4871,7 @@ dependencies = [
 [[package]]
 name = "tor-cert"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "caret",
  "derive_builder_fork_arti",
@@ -4964,7 +4888,7 @@ dependencies = [
 [[package]]
 name = "tor-chanmgr"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "async-trait",
  "base64ct",
@@ -5006,7 +4930,7 @@ dependencies = [
 [[package]]
 name = "tor-checkable"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "humantime",
  "signature",
@@ -5018,7 +4942,7 @@ dependencies = [
 [[package]]
 name = "tor-circmgr"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "async-trait",
@@ -5067,7 +4991,7 @@ dependencies = [
 [[package]]
 name = "tor-config"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "cfg-if",
@@ -5100,7 +5024,7 @@ dependencies = [
 [[package]]
 name = "tor-config-path"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "directories",
  "serde",
@@ -5113,7 +5037,7 @@ dependencies = [
 [[package]]
 name = "tor-consdiff"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive_more",
  "digest 0.10.7",
@@ -5129,7 +5053,7 @@ dependencies = [
 [[package]]
 name = "tor-dirclient"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "async-compression",
  "base64ct",
@@ -5144,6 +5068,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tor-circmgr",
  "tor-error",
+ "tor-hscrypto",
  "tor-linkspec",
  "tor-llcrypto",
  "tor-netdoc",
@@ -5156,7 +5081,7 @@ dependencies = [
 [[package]]
 name = "tor-dircommon"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "base64ct",
  "derive-deftly",
@@ -5176,7 +5101,7 @@ dependencies = [
 [[package]]
 name = "tor-dirmgr"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "async-trait",
  "base64ct",
@@ -5197,7 +5122,6 @@ dependencies = [
  "paste",
  "postage",
  "rand 0.9.2",
- "rusqlite",
  "safelog",
  "scopeguard",
  "serde",
@@ -5232,7 +5156,7 @@ dependencies = [
 [[package]]
 name = "tor-error"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive_more",
  "futures",
@@ -5249,7 +5173,7 @@ dependencies = [
 [[package]]
 name = "tor-general-addr"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive_more",
  "thiserror 2.0.18",
@@ -5259,7 +5183,7 @@ dependencies = [
 [[package]]
 name = "tor-guardmgr"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "base64ct",
@@ -5301,9 +5225,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "tor-hsclient"
+version = "0.41.0"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
+dependencies = [
+ "async-trait",
+ "derive-deftly",
+ "derive_more",
+ "educe",
+ "either",
+ "futures",
+ "itertools",
+ "oneshot-fused-workaround",
+ "postage",
+ "rand 0.9.2",
+ "retry-error",
+ "safelog",
+ "slotmap-careful",
+ "strum",
+ "thiserror 2.0.18",
+ "tor-async-utils",
+ "tor-basic-utils",
+ "tor-bytes",
+ "tor-cell",
+ "tor-checkable",
+ "tor-circmgr",
+ "tor-config",
+ "tor-dirclient",
+ "tor-error",
+ "tor-hscrypto",
+ "tor-keymgr",
+ "tor-linkspec",
+ "tor-llcrypto",
+ "tor-memquota",
+ "tor-netdir",
+ "tor-netdoc",
+ "tor-persist",
+ "tor-proto",
+ "tor-protover",
+ "tor-rtcompat",
+ "tracing",
+ "web-time-compat",
+]
+
+[[package]]
 name = "tor-hscrypto"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "data-encoding",
  "derive-deftly",
@@ -5324,6 +5292,7 @@ dependencies = [
  "tor-error",
  "tor-key-forge",
  "tor-llcrypto",
+ "tor-memquota",
  "tor-units",
  "void",
  "web-time-compat",
@@ -5332,7 +5301,7 @@ dependencies = [
 [[package]]
 name = "tor-key-forge"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive-deftly",
  "derive_more",
@@ -5353,7 +5322,7 @@ dependencies = [
 [[package]]
 name = "tor-keymgr"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "arrayvec",
@@ -5393,7 +5362,7 @@ dependencies = [
 [[package]]
 name = "tor-linkspec"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "base64ct",
  "by_address",
@@ -5419,7 +5388,7 @@ dependencies = [
 [[package]]
 name = "tor-llcrypto"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "aes",
  "base64ct",
@@ -5460,7 +5429,7 @@ dependencies = [
 [[package]]
 name = "tor-log-ratelim"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "futures",
  "humantime",
@@ -5475,7 +5444,7 @@ dependencies = [
 [[package]]
 name = "tor-memquota"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "cfg-if",
  "derive-deftly",
@@ -5505,7 +5474,7 @@ dependencies = [
 [[package]]
 name = "tor-memquota-cost"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive-deftly",
  "itertools",
@@ -5516,12 +5485,14 @@ dependencies = [
 [[package]]
 name = "tor-netdir"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "async-trait",
  "bitflags 2.11.0",
  "derive_more",
+ "digest 0.10.7",
  "futures",
+ "hex",
  "humantime",
  "itertools",
  "num_enum",
@@ -5529,8 +5500,10 @@ dependencies = [
  "serde",
  "strum",
  "thiserror 2.0.18",
+ "time",
  "tor-basic-utils",
  "tor-error",
+ "tor-hscrypto",
  "tor-linkspec",
  "tor-llcrypto",
  "tor-netdoc",
@@ -5544,7 +5517,7 @@ dependencies = [
 [[package]]
 name = "tor-netdoc"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "base64ct",
@@ -5579,8 +5552,11 @@ dependencies = [
  "tor-cert",
  "tor-checkable",
  "tor-error",
+ "tor-hscrypto",
+ "tor-linkspec",
  "tor-llcrypto",
  "tor-protover",
+ "tor-units",
  "void",
  "web-time-compat",
  "zeroize",
@@ -5589,7 +5565,7 @@ dependencies = [
 [[package]]
 name = "tor-persist"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive-deftly",
  "derive_more",
@@ -5616,7 +5592,7 @@ dependencies = [
 [[package]]
 name = "tor-proto"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "async-trait",
@@ -5660,6 +5636,7 @@ dependencies = [
  "tor-checkable",
  "tor-config",
  "tor-error",
+ "tor-hscrypto",
  "tor-linkspec",
  "tor-llcrypto",
  "tor-log-ratelim",
@@ -5679,7 +5656,7 @@ dependencies = [
 [[package]]
 name = "tor-protover"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "caret",
  "paste",
@@ -5692,7 +5669,7 @@ dependencies = [
 [[package]]
 name = "tor-relay-selection"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "rand 0.9.2",
  "serde",
@@ -5705,7 +5682,7 @@ dependencies = [
 [[package]]
 name = "tor-rtcompat"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "async-trait",
  "async_executors",
@@ -5733,7 +5710,7 @@ dependencies = [
 [[package]]
 name = "tor-rtmock"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "assert_matches",
@@ -5762,7 +5739,7 @@ dependencies = [
 [[package]]
 name = "tor-socksproto"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "amplify",
  "caret",
@@ -5778,7 +5755,7 @@ dependencies = [
 [[package]]
 name = "tor-units"
 version = "0.41.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "derive-deftly",
  "derive_more",
@@ -6332,7 +6309,7 @@ dependencies = [
 [[package]]
 name = "web-time-compat"
 version = "0.1.0"
-source = "git+https://github.com/r58Playz/arti?rev=9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9#9e86699b956c17c4fa6c1eff18f8c1ee0b2d16f9"
+source = "git+https://github.com/r58Playz/arti?rev=e271774e870ca158211f1c1b19b448b2eb49b879#e271774e870ca158211f1c1b19b448b2eb49b879"
 dependencies = [
  "web-time",
 ]
