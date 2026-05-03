@@ -7,6 +7,12 @@ import {
 	WasmProvider,
 	WasmWispProvider,
 } from "epoxy/wbg";
+/* EXTENDED.START */
+import {
+	TorSocketProvider as EpxTorSocketProvider,
+	TorStateMgrCallbacks,
+} from "epoxy/wbg";
+/* EXTENDED.END */
 import { WebSocketStream } from "./websocketstream";
 import { ProtocolExtensionBuilder, WispExtensions } from "./wispExtension";
 
@@ -168,7 +174,31 @@ export class EitherSocketProvider extends Provider<
 	}
 }
 
+/* EXTENDED.START */
+export type TorStorage = TorStateMgrCallbacks;
+
+export class TorSocketProvider extends Provider<
+	EpxTorSocketProvider,
+	WasmProvider
+> {
+	constructor(
+		backend: Exclude<SocketProvider, TorSocketProvider> | "snowflake",
+		storage: TorStorage
+	) {
+		const inner = backend === "snowflake" ? undefined : backend.provider;
+		super(new EpxTorSocketProvider(inner, storage), (x) => x.box());
+	}
+
+	async bootstrap() {
+		await this._provider.bootstrap();
+	}
+}
+/* EXTENDED.END */
+
 export type SocketProvider =
 	| JsSocketProvider
 	| WispSocketProvider
-	| EitherSocketProvider;
+	| EitherSocketProvider
+	/* EXTENDED.START */
+	| TorSocketProvider
+	/* EXTENDED.END */;

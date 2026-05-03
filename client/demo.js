@@ -4,9 +4,10 @@ import {
 	EpoxyClient,
 	JsProtocolExtension,
 	JsProtocolExtensionBuilder,
+	TorSocketProvider,
 	WebSocketJsProvider,
 	WispSocketProvider,
-} from "./dist/full.bundled.js";
+} from "./dist/extended.bundled.js";
 
 console.log(version);
 
@@ -324,5 +325,48 @@ async function testRedirects() {
 }
 
 await testRedirects();
+
+async function testTor() {
+	console.log("tor: setting up provider");
+	let torProvider = new TorSocketProvider(provider, {
+		load: (key) => localStorage.getItem(`tor:${key}`),
+		store: (key, value) => localStorage.setItem(`tor:${key}`, value),
+	});
+
+	console.log("tor: bootstrapping (this can take 30-60s)");
+	let bootstrapStart = Date.now();
+	await withTimeout(torProvider.bootstrap(), "tor bootstrap", 120000);
+	console.log(`tor: bootstrapped in ${Date.now() - bootstrapStart}ms`);
+
+	let torClient = new EpoxyClient(torProvider);
+
+	console.log("tor: fetching tcpbin.com via raw TCP through Tor");
+	let tcp = await withTimeout(
+		torClient.connect("tcpbin.com", 4242),
+		"tor tcp connect",
+		60000
+	);
+	await withTimeout(
+		sendTest(tcp.read, tcp.write, "tor-tcp", "hello-tor\n"),
+		"tor tcp echo",
+		60000
+	);
+
+	console.log("tor: fetching check.torproject.org");
+	let resp = await withTimeout(
+		torClient.fetch("https://check.torproject.org/"),
+		"tor fetch",
+		60000
+	);
+	let body = await resp.text();
+	let usingTor = body.includes("Congratulations") && body.includes("Tor");
+	assert(
+		usingTor,
+		`check.torproject.org didn't confirm tor usage (status=${resp.status})`
+	);
+	console.log("tor: check.torproject.org confirmed tor exit");
+}
+
+await testTor();
 
 console.log("done");
