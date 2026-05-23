@@ -728,7 +728,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "hyper",
+ "hyper 1.8.1",
  "hyper-util 0.1.20 (git+https://github.com/r58Playz/hyper-util?branch=tokio-client)",
  "instant",
  "js-sys",
@@ -768,7 +768,7 @@ dependencies = [
  "futures-util",
  "hickory-resolver",
  "http-body-util",
- "hyper",
+ "hyper 1.9.0",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "libc",
@@ -1081,8 +1081,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.13"
-source = "git+https://github.com/r58Playz/h2-wasm#621ed3c542142894f0824b9ed351a255a2d15cef"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "171fefbc92fe4a4de27e0698d6a5b392d6a0e333506bc49133760b3bcf948733"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1091,7 +1092,6 @@ dependencies = [
  "futures-sink",
  "http",
  "indexmap 2.13.0",
- "instant",
  "slab",
  "tokio",
  "tokio-util",
@@ -1247,6 +1247,27 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "itoa",
+ "pin-project-lite",
+ "smallvec",
+ "tokio",
+ "want",
+]
+
+[[package]]
+name = "hyper"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "futures-channel",
+ "futures-core",
+ "h2",
+ "http",
+ "http-body",
+ "httparse",
  "httpdate",
  "itoa",
  "pin-project-lite",
@@ -1261,7 +1282,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
 dependencies = [
- "hyper",
+ "hyper 1.9.0",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project-lite",
  "tokio",
@@ -1279,7 +1300,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
- "hyper",
+ "hyper 1.9.0",
  "libc",
  "pin-project-lite",
  "socket2 0.6.3",
@@ -1298,7 +1319,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
- "hyper",
+ "hyper 1.9.0",
  "pin-project-lite",
  "tokio",
  "tower-layer",
@@ -2482,7 +2503,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "humantime",
- "hyper",
+ "hyper 1.9.0",
  "sha2",
  "simple_moving_average",
  "tikv-jemallocator",
@@ -2940,7 +2961,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "hyper",
+ "hyper 1.9.0",
  "hyper-timeout",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding",

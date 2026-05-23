@@ -8,7 +8,11 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::{Role, WispError};
+use crate::{
+	packet::CloseReason,
+	ws::{TransportRead, TransportWrite},
+	Role, WispError,
+};
 
 use super::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder};
 
@@ -31,8 +35,10 @@ pub enum PasswordProtocolExtension {
 	ServerAfterClientInfo {
 		/// The client's chosen user.
 		chosen_user: String,
-		/// The client's chosen password
+		/// The client's chosen password.
 		chosen_password: String,
+		/// Whether this username/password is correct.
+		valid: bool,
 	},
 
 	/// Password protocol extension before the server INFO has been received.
@@ -55,6 +61,20 @@ impl PasswordProtocolExtension {
 impl ProtocolExtension for PasswordProtocolExtension {
 	fn get_id(&self) -> u8 {
 		PASSWORD_PROTOCOL_EXTENSION_ID
+	}
+
+	async fn handle_handshake(
+		&mut self,
+		_read: &mut dyn TransportRead,
+		_write: &mut dyn TransportWrite,
+	) -> Result<Option<(CloseReason, WispError)>, WispError> {
+		match self {
+			Self::ServerAfterClientInfo { valid, .. } if !*valid => Ok(Some((
+				CloseReason::ExtensionsPasswordAuthFailed,
+				WispError::PasswordExtensionCredsInvalid,
+			))),
+			_ => Ok(None),
+		}
 	}
 
 	fn encode(&self) -> Bytes {
@@ -194,15 +214,12 @@ impl ProtocolExtensionBuilder for PasswordProtocolExtensionBuilder {
 					required: *required,
 				};
 
-				if valid {
-					Ok(PasswordProtocolExtension::ServerAfterClientInfo {
-						chosen_user: user,
-						chosen_password: password,
-					}
-					.into())
-				} else {
-					Err(WispError::PasswordExtensionCredsInvalid)
+				Ok(PasswordProtocolExtension::ServerAfterClientInfo {
+					chosen_user: user,
+					chosen_password: password,
+					valid,
 				}
+				.into())
 			}
 			Self::ClientBeforeServerInfo { creds } => {
 				let required = bytes.get_u8() != 0;

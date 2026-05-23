@@ -11,8 +11,8 @@ use crate::{
 use super::{
 	get_supported_extensions, handle_handshake,
 	inner::{FlowControl, MultiplexorActor, StreamMap},
-	send_info_packet, Multiplexor, MultiplexorImpl, MuxResult, WispHandshakeResult,
-	WispHandshakeResultKind, WispV2Handshake,
+	missing_required_extensions, send_info_packet, Multiplexor, MultiplexorImpl, MuxResult,
+	WispHandshakeResult, WispHandshakeResultKind, WispV2Handshake,
 };
 
 pub(crate) struct ServerActor<W: TransportWrite> {
@@ -79,27 +79,53 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 		if let Some(WispV2Handshake {
 			mut builders,
 			closure,
+			required,
 		}) = v2
 		{
 			send_info_packet(tx, &mut builders, Role::Server).await?;
 
-			(closure)(&mut builders).await?;
+			if let Some(closure) = closure {
+				(closure)(&mut builders).await?;
+			}
 
 			let packet =
 				MaybeInfoPacket::decode(rx.next_erroring().await?, &mut builders, Role::Server)?;
 
 			match packet {
 				MaybeInfoPacket::Info(info) => {
+					if let Some(missing) = missing_required_extensions(&info.extensions, required) {
+						tx.lock().await;
+						let mut handle = tx.get_handle();
+						handle
+							.send(
+								Packet::new_close(0, CloseReason::ExtensionsIncompatible).encode(),
+							)
+							.await?;
+						handle.close().await?;
+
+						return Err(WispError::ExtensionsNotSupported(missing));
+					}
+
 					let mut supported_extensions =
 						get_supported_extensions(info.extensions, &mut builders);
 
-					handle_handshake(rx, tx, &mut supported_extensions).await?;
+					if let Some((close_reason, err)) =
+						handle_handshake(rx, tx, &mut supported_extensions).await?
+					{
+						tx.lock().await;
+						let mut handle = tx.get_handle();
+						handle
+							.send(Packet::new_close(0, close_reason).encode())
+							.await?;
+						handle.close().await?;
 
-					tx.lock().await;
-					tx.get()
-						.send(Packet::new_continue(0, self.buffer_size).encode())
-						.await?;
-					tx.unlock();
+						return Err(err);
+					} else {
+						tx.lock().await;
+						tx.get_handle()
+							.send(Packet::new_continue(0, self.buffer_size).encode())
+							.await?;
+					}
 
 					// v2 client
 					Ok(WispHandshakeResult {
@@ -134,34 +160,6 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 				downgraded: false,
 				buffer_size: self.buffer_size,
 			})
-		}
-	}
-
-	async fn handle_error(
-		&mut self,
-		err: WispError,
-		tx: &mut LockedWebSocketWrite<W>,
-	) -> Result<WispError, WispError> {
-		match err {
-			WispError::PasswordExtensionCredsInvalid => {
-				tx.lock().await;
-				tx.get()
-					.send(Packet::new_close(0, CloseReason::ExtensionsPasswordAuthFailed).encode())
-					.await?;
-				tx.get().close().await?;
-				tx.unlock();
-				Ok(err)
-			}
-			WispError::CertAuthExtensionSigInvalid => {
-				tx.lock().await;
-				tx.get()
-					.send(Packet::new_close(0, CloseReason::ExtensionsCertAuthFailed).encode())
-					.await?;
-				tx.get().close().await?;
-				tx.unlock();
-				Ok(err)
-			}
-			x => Ok(x),
 		}
 	}
 }

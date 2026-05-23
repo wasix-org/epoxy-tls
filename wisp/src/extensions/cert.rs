@@ -10,7 +10,11 @@ use ed25519::{
 	Signature,
 };
 
-use crate::{Role, WispError};
+use crate::{
+	packet::CloseReason,
+	ws::{TransportRead, TransportWrite},
+	Role, WispError,
+};
 
 use super::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder};
 
@@ -126,9 +130,9 @@ pub enum CertAuthProtocolExtension {
 		signature: Bytes,
 	},
 	/// Marker that client has successfully recieved the challenge.
-	ClientRecieved,
-	/// Marker that server has successfully verified the client.
-	ServerVerified,
+	ClientReceived,
+	/// Marker that server has checked the client's challenge response.
+	ServerReceived { valid: bool },
 }
 
 impl CertAuthProtocolExtension {
@@ -140,6 +144,20 @@ impl CertAuthProtocolExtension {
 impl ProtocolExtension for CertAuthProtocolExtension {
 	fn get_id(&self) -> u8 {
 		Self::ID
+	}
+
+	async fn handle_handshake(
+		&mut self,
+		_read: &mut dyn TransportRead,
+		_write: &mut dyn TransportWrite,
+	) -> Result<Option<(CloseReason, WispError)>, WispError> {
+		match self {
+			Self::ServerReceived { valid } if !*valid => Ok(Some((
+				CloseReason::ExtensionsCertAuthFailed,
+				WispError::CertAuthExtensionSigInvalid,
+			))),
+			_ => Ok(None),
+		}
 	}
 
 	fn encode(&self) -> Bytes {
@@ -166,7 +184,7 @@ impl ProtocolExtension for CertAuthProtocolExtension {
 				out.extend_from_slice(signature);
 				out.freeze()
 			}
-			Self::ServerVerified | Self::ClientRecieved => Bytes::new(),
+			Self::ServerReceived { .. } | Self::ClientReceived => Bytes::new(),
 		}
 	}
 
@@ -275,16 +293,12 @@ impl ProtocolExtensionBuilder for CertAuthProtocolExtensionBuilder {
 					.ok_or(WispError::CertAuthExtensionSigInvalid)?;
 				let hash = bytes.split_to(32);
 				let sig = Signature::from_slice(&bytes).map_err(CertAuthError::from)?;
-				let is_valid = verifiers
+				let valid = verifiers
 					.iter()
 					.filter(|x| x.cert_type == cert_type && x.hash == *hash)
 					.any(|x| x.verifier.verify(challenge, &sig).is_ok());
 
-				if is_valid {
-					Ok(CertAuthProtocolExtension::ServerVerified.into())
-				} else {
-					Err(WispError::CertAuthExtensionSigInvalid)
-				}
+				Ok(CertAuthProtocolExtension::ServerReceived { valid }.into())
 			}
 			Self::ClientBeforeChallenge { signer } => {
 				let required = bytes.get_u8() != 0;
@@ -299,7 +313,7 @@ impl ProtocolExtensionBuilder for CertAuthProtocolExtensionBuilder {
 					required,
 				};
 
-				Ok(CertAuthProtocolExtension::ClientRecieved.into())
+				Ok(CertAuthProtocolExtension::ClientReceived.into())
 			}
 
 			// client has already recieved a challenge or

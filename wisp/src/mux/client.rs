@@ -1,9 +1,9 @@
-use futures::channel::oneshot;
+use futures::{channel::oneshot, SinkExt};
 
 use crate::{
 	extensions::udp::UdpProtocolExtension,
 	mux::send_info_packet,
-	packet::{ConnectPacket, ContinuePacket, MaybeInfoPacket, Packet, StreamType},
+	packet::{CloseReason, ConnectPacket, ContinuePacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
 	ws::{TransportRead, TransportReadExt, TransportWrite},
 	LockedWebSocketWrite, Role, WispError,
@@ -12,8 +12,8 @@ use crate::{
 use super::{
 	get_supported_extensions, handle_handshake,
 	inner::{FlowControl, MultiplexorActor, StreamMap, WsEvent},
-	validate_continue_packet, Multiplexor, MultiplexorImpl, MuxResult, WispHandshakeResult,
-	WispHandshakeResultKind, WispV2Handshake,
+	missing_required_extensions, validate_continue_packet, Multiplexor, MultiplexorImpl, MuxResult,
+	WispHandshakeResult, WispHandshakeResultKind, WispV2Handshake,
 };
 
 pub(crate) struct ClientActor;
@@ -66,6 +66,7 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 		if let Some(WispV2Handshake {
 			mut builders,
 			closure,
+			required,
 		}) = v2
 		{
 			// user asked for v2 client
@@ -75,13 +76,40 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 			match packet {
 				MaybeInfoPacket::Info(info) => {
 					// v2 server
-					(closure)(&mut builders).await?;
-					send_info_packet(tx, &mut builders, Role::Client).await?;
+					if let Some(missing) = missing_required_extensions(&info.extensions, required) {
+						tx.lock().await;
+						let mut handle = tx.get_handle();
+						handle
+							.send(
+								Packet::new_close(0, CloseReason::ExtensionsIncompatible).encode(),
+							)
+							.await?;
+						handle.close().await?;
+
+						return Err(WispError::ExtensionsNotSupported(missing));
+					}
+
+					if let Some(closure) = closure {
+						(closure)(&mut builders).await?;
+					}
 
 					let mut supported_extensions =
 						get_supported_extensions(info.extensions, &mut builders);
 
-					handle_handshake(rx, tx, &mut supported_extensions).await?;
+					if let Some((close_reason, err)) =
+						handle_handshake(rx, tx, &mut supported_extensions).await?
+					{
+						tx.lock().await;
+						let mut handle = tx.get_handle();
+						handle
+							.send(Packet::new_close(0, close_reason).encode())
+							.await?;
+						handle.close().await?;
+
+						return Err(err);
+					} else {
+						send_info_packet(tx, &mut builders, Role::Client).await?;
+					}
 
 					let buffer_size =
 						validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
@@ -116,14 +144,6 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 				buffer_size,
 			})
 		}
-	}
-
-	async fn handle_error(
-		&mut self,
-		err: WispError,
-		_: &mut LockedWebSocketWrite<W>,
-	) -> Result<WispError, WispError> {
-		Ok(err)
 	}
 }
 

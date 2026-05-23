@@ -15,8 +15,7 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes};
 
 use crate::{
-	ws::{PayloadMut, TransportRead, TransportWrite},
-	Role, WispError,
+	Role, WispError, packet::CloseReason, ws::{PayloadMut, TransportRead, TransportWrite}
 };
 
 mod private {
@@ -109,14 +108,15 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 
 	/// Handle the handshake part of a Wisp connection.
 	///
-	/// This should be used to send or receive data before any streams are created.
+	/// This should be used to send or receive data and possibly reject the handshake before it
+	/// finishes. Rejections need both a close reason and an error to reject the connection future with.
 	async fn handle_handshake(
 		&mut self,
 		read: &mut dyn TransportRead,
 		write: &mut dyn TransportWrite,
-	) -> Result<(), WispError> {
+	) -> Result<Option<(CloseReason, WispError)>, WispError> {
 		let _ = (read, write);
-		Ok(())
+		Ok(None)
 	}
 
 	/// Handle receiving a packet.

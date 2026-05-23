@@ -14,6 +14,7 @@ pub type ClientMux<W> = Multiplexor<ClientImpl, W>;
 
 use crate::{
 	extensions::{udp::UdpProtocolExtension, AnyProtocolExtension, AnyProtocolExtensionBuilder},
+	inner::MuxInnerResult,
 	packet::{CloseReason, InfoPacket, Packet, PacketType},
 	ws::{TransportRead, TransportWrite},
 	LockedWebSocketWrite, LockedWebSocketWriteGuard, Role, WispError, WISP_VERSION,
@@ -47,15 +48,17 @@ async fn handle_handshake<R: TransportRead, W: TransportWrite>(
 	read: &mut R,
 	write: &mut LockedWebSocketWrite<W>,
 	extensions: &mut [AnyProtocolExtension],
-) -> Result<(), WispError> {
+) -> Result<Option<(CloseReason, WispError)>, WispError> {
 	write.lock().await;
 	let mut handle = write.get_handle();
 	for extension in extensions {
-		extension.handle_handshake(read, &mut handle).await?;
+		if let Some(reason) = extension.handle_handshake(read, &mut handle).await? {
+			return Ok(Some(reason));
+		}
 	}
 	drop(handle);
 
-	Ok(())
+	Ok(None)
 }
 
 async fn send_info_packet<W: TransportWrite>(
@@ -104,6 +107,15 @@ fn get_supported_extensions(
 		.collect()
 }
 
+fn missing_required_extensions(
+	extensions: &[AnyProtocolExtension],
+	required: Vec<u8>,
+) -> Option<Vec<u8>> {
+	let ids: Vec<u8> = extensions.iter().map(|x| x.get_id()).collect();
+	let missing: Vec<u8> = required.into_iter().filter(|x| !ids.contains(x)).collect();
+	(!missing.is_empty()).then_some(missing)
+}
+
 trait MultiplexorImpl<W: TransportWrite> {
 	type Actor: MultiplexorActor<W> + 'static;
 
@@ -113,12 +125,6 @@ trait MultiplexorImpl<W: TransportWrite> {
 		tx: &mut LockedWebSocketWrite<W>,
 		v2: Option<WispV2Handshake>,
 	) -> Result<WispHandshakeResult, WispError>;
-
-	async fn handle_error(
-		&mut self,
-		err: WispError,
-		tx: &mut LockedWebSocketWrite<W>,
-	) -> Result<WispError, WispError>;
 }
 
 #[expect(private_bounds)]
@@ -145,41 +151,30 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		R: TransportRead,
 	{
 		let mut tx = LockedWebSocketWrite::new(tx);
+		let handshake_result = muxer.handshake(&mut rx, &mut tx, wisp_v2).await?;
+		let (extensions, extra_packet) = handshake_result.kind.into_parts();
 
-		let ret = async {
-			let handshake_result = muxer.handshake(&mut rx, &mut tx, wisp_v2).await?;
-			let (extensions, extra_packet) = handshake_result.kind.into_parts();
+		let MuxInnerResult { mux, actor_tx } = MuxInner::new(
+			rx,
+			tx.clone(),
+			actor,
+			extra_packet,
+			extensions.clone(),
+			handshake_result.buffer_size,
+		);
 
-			Ok((
-				MuxInner::new(
-					rx,
-					tx.clone(),
-					actor,
-					extra_packet,
-					extensions.clone(),
-					handshake_result.buffer_size,
-				),
-				handshake_result.downgraded,
-				extensions,
-			))
-		}
-		.await;
+		Ok((
+			Self {
+				mux: muxer,
 
-		match ret {
-			Ok((mux_result, downgraded, extensions)) => Ok(MuxResult(
-				Self {
-					mux: muxer,
+				downgraded: handshake_result.downgraded,
+				supported_extensions: extensions,
 
-					downgraded,
-					supported_extensions: extensions,
-
-					actor_tx: mux_result.actor_tx,
-					tx,
-				},
-				Box::pin(mux_result.mux.into_future()),
-			)),
-			Err(x) => Err(muxer.handle_error(x, &mut tx).await?),
-		}
+				actor_tx,
+				tx,
+			},
+			Box::pin(mux.into_future()),
+		))
 	}
 
 	/// Whether the connection was downgraded to Wisp v1.
@@ -253,59 +248,8 @@ pub type MultiplexorActorFuture = Pin<Box<dyn Future<Output = Result<(), WispErr
 
 /// Result of creating a multiplexor. Helps require protocol extensions.
 #[expect(private_bounds)]
-pub struct MuxResult<M, W>(Multiplexor<M, W>, MultiplexorActorFuture)
-where
-	M: MultiplexorImpl<W>,
-	W: TransportWrite;
-
-#[expect(private_bounds)]
-impl<M, W> MuxResult<M, W>
-where
-	M: MultiplexorImpl<W>,
-	W: TransportWrite,
-{
-	/// Require no protocol extensions.
-	pub fn with_no_required_extensions(self) -> (Multiplexor<M, W>, MultiplexorActorFuture) {
-		(self.0, self.1)
-	}
-
-	/// Require protocol extensions by their ID. Will close the multiplexor connection if
-	/// extensions are not supported.
-	pub async fn with_required_extensions(
-		self,
-		extensions: &[u8],
-	) -> Result<(Multiplexor<M, W>, MultiplexorActorFuture), WispError> {
-		let mut unsupported_extensions = Vec::new();
-		let supported_extensions = self.0.get_extensions();
-
-		for extension in extensions {
-			if !supported_extensions
-				.iter()
-				.any(|x| x.get_id() == *extension)
-			{
-				unsupported_extensions.push(*extension);
-			}
-		}
-
-		if unsupported_extensions.is_empty() {
-			Ok((self.0, self.1))
-		} else {
-			self.0
-				.close_with_reason(CloseReason::ExtensionsIncompatible)
-				.await?;
-			self.1.await?;
-			Err(WispError::ExtensionsNotSupported(unsupported_extensions))
-		}
-	}
-
-	/// Shorthand for `with_required_extensions(&[UdpProtocolExtension::ID])`
-	pub async fn with_udp_extension_required(
-		self,
-	) -> Result<(Multiplexor<M, W>, MultiplexorActorFuture), WispError> {
-		self.with_required_extensions(&[UdpProtocolExtension::ID])
-			.await
-	}
-}
+pub type MuxResult<M: MultiplexorImpl<W>, W: TransportWrite> =
+	(Multiplexor<M, W>, MultiplexorActorFuture);
 
 /// Wisp V2 middleware closure.
 pub type WispV2Middleware = dyn for<'a> Fn(
@@ -315,28 +259,54 @@ pub type WispV2Middleware = dyn for<'a> Fn(
 /// Wisp V2 handshake and protocol extension settings wrapper struct.
 pub struct WispV2Handshake {
 	builders: Vec<AnyProtocolExtensionBuilder>,
-	closure: Box<WispV2Middleware>,
+	required: Vec<u8>,
+	closure: Option<Box<WispV2Middleware>>,
 }
 
 impl WispV2Handshake {
-	/// Create a Wisp V2 settings struct with no middleware.
-	pub fn new(builders: Vec<AnyProtocolExtensionBuilder>) -> Self {
+	/// Create a Wisp V2 settings struct with no extensions
+	pub fn empty() -> Self {
 		Self {
-			builders,
-			closure: Box::new(|_| Box::pin(async { Ok(()) })),
+			builders: Vec::new(),
+			required: Vec::new(),
+			closure: None,
 		}
 	}
 
-	/// Create a Wisp V2 settings struct with some middleware.
-	pub fn new_with_middleware(
-		builders: Vec<AnyProtocolExtensionBuilder>,
-		closure: Box<WispV2Middleware>,
-	) -> Self {
-		Self { builders, closure }
+	/// Create a Wisp V2 settings struct with some extensions.
+	pub fn new(builders: Vec<AnyProtocolExtensionBuilder>, required: Vec<u8>) -> Self {
+		Self {
+			builders,
+			required,
+			closure: None,
+		}
+	}
+
+	/// Add some middleware to the settings struct.
+	pub fn with_middleware(mut self, closure: Box<WispV2Middleware>) -> Self {
+		self.closure.replace(closure);
+
+		self
 	}
 
 	/// Add a Wisp V2 extension builder to the settings struct.
-	pub fn add_extension(&mut self, extension: AnyProtocolExtensionBuilder) {
+	pub fn with_extension(mut self, extension: AnyProtocolExtensionBuilder) -> Self {
 		self.builders.push(extension);
+
+		self
+	}
+
+	/// Add a Wisp V2 extension to the list of extensions that has to be supported by the other side
+	/// in the settings struct.
+	pub fn with_required_extension(mut self, extension: u8) -> Self {
+		self.required.push(extension);
+
+		self
+	}
+
+	/// Add the UDP Wisp V2 extension to the list of extensions that has to be supported by the other side
+	/// in the settings struct.
+	pub fn with_udp_required_extension(self) -> Self {
+		self.with_required_extension(UdpProtocolExtension::ID)
 	}
 }
