@@ -1,4 +1,9 @@
-use std::{collections::HashMap, net::IpAddr, ops::RangeInclusive, path::PathBuf};
+use std::{
+	collections::HashMap,
+	net::{IpAddr, SocketAddr, ToSocketAddrs},
+	ops::RangeInclusive,
+	path::PathBuf,
+};
 
 use cfg_if::cfg_if;
 use clap::{Parser, ValueEnum};
@@ -213,6 +218,9 @@ pub struct StreamConfig {
 
 	/// DNS servers to resolve with. Will default to system configuration.
 	pub dns_servers: Vec<IpAddr>,
+	/// Socks5 server to use as a proxy for streams. Currently requires a server with authentication
+	/// disabled. Epoxy still does its own DNS resolution too.
+	pub socks5_server: Option<String>,
 
 	/// Whether or not to allow connections to IP addresses.
 	pub allow_direct_ip: bool,
@@ -272,6 +280,8 @@ struct ConfigCache {
 
 	pub allowed_udp_hosts: RegexSet,
 	pub blocked_udp_hosts: RegexSet,
+
+	pub socks5_server: Option<SocketAddr>,
 }
 
 lazy_static! {
@@ -299,6 +309,8 @@ lazy_static! {
 
 			allowed_udp_hosts: RegexSet::new(&CONFIG.stream.allow_udp_hosts).unwrap(),
 			blocked_udp_hosts: RegexSet::new(&CONFIG.stream.block_udp_hosts).unwrap(),
+
+			socks5_server: CONFIG.stream.socks5_server.as_ref().map(|x| x.to_socket_addrs().expect("failed to resolve socks5 server").next().expect("failed to resolve socks5 server")),
 		}
 	};
 }
@@ -385,7 +397,7 @@ impl WispConfig {
 	}
 
 	#[doc(hidden)]
-	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Handshake>, Vec<u8>, u32)> {
+	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Handshake>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
 			let mut required_extensions: Vec<u8> = Vec::new();
@@ -430,12 +442,11 @@ impl WispConfig {
 			}
 
 			Ok((
-				Some(WispV2Handshake::new(extensions)),
-				required_extensions,
+				Some(WispV2Handshake::new(extensions, required_extensions)),
 				self.buffer_size,
 			))
 		} else {
-			Ok((None, Vec::new(), self.buffer_size))
+			Ok((None, self.buffer_size))
 		}
 	}
 }
@@ -452,6 +463,7 @@ impl Default for StreamConfig {
 			allow_twisp: false,
 
 			dns_servers: Vec::new(),
+			socks5_server: None,
 
 			allow_direct_ip: true,
 			allow_loopback: true,
@@ -476,6 +488,11 @@ impl Default for StreamConfig {
 }
 
 impl StreamConfig {
+	#[doc(hidden)]
+	pub fn socks5_server(&self) -> Option<SocketAddr> {
+		CONFIG_CACHE.socks5_server
+	}
+
 	#[doc(hidden)]
 	pub fn allowed_ports(&self) -> &'static [RangeInclusive<u16>] {
 		&CONFIG_CACHE.allowed_ports

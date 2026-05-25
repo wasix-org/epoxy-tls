@@ -57,7 +57,6 @@ macro_rules! refstruct {
 		#[wasm_bindgen::prelude::wasm_bindgen]
 		pub struct $refname {
 			inner: *mut $name,
-			#[wasm_bindgen(skip)]
 			scope: std::sync::Arc<std::sync::atomic::AtomicBool>,
 		}
 		impl From<(&mut $name, std::sync::Arc<std::sync::atomic::AtomicBool>)> for $refname {
@@ -185,7 +184,7 @@ pub struct JsWispV2Handshake(#[wasm_bindgen(skip)] pub WispV2Handshake);
 #[wasm_bindgen]
 impl JsWispV2Handshake {
 	#[wasm_bindgen(constructor)]
-	pub fn new(builders: ProtocolExtensionBuilders, middleware: JsWispV2Middleware) -> Self {
+	pub fn new(builders: ProtocolExtensionBuilders, required: Vec<u8>, middleware: JsWispV2Middleware) -> Self {
 		let middleware: Function = middleware.unchecked_into();
 		let closure: Box<wisp_mux::WispV2Middleware> =
 			Box::new(move |extensions: &mut Vec<AnyProtocolExtensionBuilder>| {
@@ -213,6 +212,6 @@ impl JsWispV2Handshake {
 				})
 			});
 
-		Self(WispV2Handshake::new_with_middleware(builders.0, closure))
+		Self(WispV2Handshake::new(builders.0, required).with_middleware(closure))
 	}
 }

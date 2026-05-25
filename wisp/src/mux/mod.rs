@@ -247,7 +247,7 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 pub type MultiplexorActorFuture = Pin<Box<dyn Future<Output = Result<(), WispError>> + Send>>;
 
 /// Result of creating a multiplexor. Helps require protocol extensions.
-#[expect(private_bounds)]
+#[expect(private_bounds, type_alias_bounds)]
 pub type MuxResult<M: MultiplexorImpl<W>, W: TransportWrite> =
 	(Multiplexor<M, W>, MultiplexorActorFuture);
 

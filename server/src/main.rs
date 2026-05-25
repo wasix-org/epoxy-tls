@@ -10,9 +10,9 @@ use config::{validate_config_cache, BindAddr, Cli, Config, RuntimeFlavor, StatsE
 use futures_util::{future::select_all, FutureExt, TryFutureExt};
 use handle::{handle_wisp, handle_wsproxy, wisp::wispnet::handle_wispnet};
 use hickory_resolver::{
-	config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-	system_conf::read_system_conf,
-	TokioAsyncResolver,
+	config::{NameServerConfig, ResolverConfig},
+	net::runtime::TokioRuntimeProvider,
+	TokioResolver,
 };
 use lazy_static::lazy_static;
 use listener::ServerListener;
@@ -51,14 +51,21 @@ type Client = (Mutex<HashMap<Uuid, (ConnectPacket, ConnectPacket)>>, String);
 #[doc(hidden)]
 #[derive(Debug)]
 pub enum Resolver {
-	Hickory(TokioAsyncResolver),
+	Hickory(TokioResolver),
 	System,
 }
 
 impl Resolver {
 	pub async fn resolve(&self, host: String) -> anyhow::Result<Box<dyn Iterator<Item = IpAddr>>> {
 		match self {
-			Self::Hickory(resolver) => Ok(Box::new(resolver.lookup_ip(host).await?.into_iter())),
+			Self::Hickory(resolver) => Ok(Box::new(
+				resolver
+					.lookup_ip(host)
+					.await?
+					.iter()
+					.collect::<Vec<_>>()
+					.into_iter(),
+			)),
 			Self::System => Ok(Box::new(
 				tokio::net::lookup_host(host + ":0").await?.map(|x| x.ip()),
 			)),
@@ -95,21 +102,26 @@ lazy_static! {
 	#[doc(hidden)]
 	pub static ref RESOLVER: Resolver = {
 		if CONFIG.stream.dns_servers.is_empty() {
-			if let Ok((config, opts)) = read_system_conf() {
-				Resolver::Hickory(TokioAsyncResolver::tokio(config, opts))
-			} else {
-				warn!("unable to read system dns configuration. using system dns resolver with no caching");
-				Resolver::System
+			match TokioResolver::builder_tokio() {
+				Ok(builder) => Resolver::Hickory(builder.build().unwrap()),
+				Err(_) => {
+					warn!("unable to read system dns configuration. using system dns resolver with no caching");
+					Resolver::System
+				}
 			}
 		} else {
-			Resolver::Hickory(TokioAsyncResolver::tokio(
-				ResolverConfig::from_parts(
-					None,
-					Vec::new(),
-					NameServerConfigGroup::from_ips_clear(&CONFIG.stream.dns_servers, 53, true),
-				),
-				ResolverOpts::default(),
-			))
+			Resolver::Hickory(
+				TokioResolver::builder_with_config(
+					ResolverConfig::from_parts(
+						None,
+						Vec::new(),
+						CONFIG.stream.dns_servers.iter().copied().map(NameServerConfig::udp_and_tcp).collect()
+					),
+					TokioRuntimeProvider::default(),
+				)
+				.build()
+				.unwrap()
+			)
 		}
 	};
 }
@@ -179,7 +191,11 @@ fn threadpercore_main() -> Result<()> {
 	let mut threads = Vec::with_capacity(cores);
 
 	for _ in 1..cores {
-		threads.push(Box::pin(threadpercore_init_thread(listen_wisp()).map_err(|x| anyhow!(x)).map(|x| x?)) as Pin<Box<dyn Future<Output = Result<()>>>>);
+		threads.push(Box::pin(
+			threadpercore_init_thread(listen_wisp())
+				.map_err(|x| anyhow!(x))
+				.map(|x| x?),
+		) as Pin<Box<dyn Future<Output = Result<()>>>>);
 	}
 
 	rt.block_on(async move {
@@ -194,9 +210,15 @@ fn threadpercore_main() -> Result<()> {
 			tokio::spawn(listen_stats(bind_addr));
 		}
 
-		let wisp = Box::pin(tokio::spawn(listen_wisp()).map_err(|x| anyhow!(x)).map(|x| x?)) as Pin<Box<dyn Future<Output = Result<()>>>>;
+		let wisp = Box::pin(
+			tokio::spawn(listen_wisp())
+				.map_err(|x| anyhow!(x))
+				.map(|x| x?),
+		) as Pin<Box<dyn Future<Output = Result<()>>>>;
 
-		select_all(threads.into_iter().chain(std::iter::once(wisp))).await.0
+		select_all(threads.into_iter().chain(std::iter::once(wisp)))
+			.await
+			.0
 	})
 }
 

@@ -102,6 +102,7 @@ export class WsProxyJsSocketProvider extends JsSocketProvider {
 
 export interface WispV2Handshake {
 	builders: ProtocolExtensionBuilder[];
+	requiredExts: number[],
 }
 
 export class WispSocketProvider extends Provider<
@@ -115,15 +116,12 @@ export class WispSocketProvider extends Provider<
 	constructor(
 		provider: JsProvider,
 		server: string,
-		connectionPrefs?: () => [
-			v2: WispV2Handshake | undefined,
-			requiredExts: number[],
-		]
+		connectionPrefs?: () => WispV2Handshake | undefined
 	) {
 		let v2;
 		if (connectionPrefs) {
 			v2 = () => {
-				let [v2, required] = connectionPrefs();
+				let v2 = connectionPrefs();
 
 				let handshake: JsWispV2Handshake | undefined;
 				if (v2) {
@@ -131,10 +129,10 @@ export class WispSocketProvider extends Provider<
 					for (let builder of v2.builders) {
 						builder.appendTo(builders);
 					}
-					handshake = new JsWispV2Handshake(builders, async () => {});
+					handshake = new JsWispV2Handshake(builders, new Uint8Array(v2.requiredExts), async () => { });
 				}
 
-				return [handshake, new Uint8Array(required)];
+				return handshake;
 			};
 		}
 		super(EpxWispProvider.new(provider.provider, server, v2), (x) => x.box());

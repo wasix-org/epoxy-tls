@@ -4,9 +4,7 @@ use futures::{SinkExt, StreamExt};
 use js_sys::{Function, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use wisp_mux::{
-	Role, WispError,
-	extensions::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder},
-	ws::{Payload, TransportRead, TransportWrite},
+	Role, WispError, extensions::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder}, packet::CloseReason, ws::{Payload, TransportRead, TransportWrite}
 };
 
 use crate::{
@@ -167,18 +165,19 @@ impl ProtocolExtension for JsProtocolExtension {
 		ret.to_vec().into()
 	}
 
+	// TODO expose CloseCode, WispError path
 	async fn handle_handshake(
 		&mut self,
 		read: &mut dyn TransportRead,
 		write: &mut dyn TransportWrite,
-	) -> Result<(), WispError> {
+	) -> Result<Option<(CloseReason, WispError)>, WispError> {
 		let scope = RefScope::new();
 		let read: JsTransportRead = (read, scope.token()).into();
 		let write: JsTransportWrite = (write, scope.token()).into();
 
 		self.handshake
 			.call2(&JsValue::NULL, &read.into(), &write.into())
-			.map(|_| ())
+			.map(|_| None)
 			.map_err(|x| WispError::ExtensionImplError(Box::new(EpoxyError::js_error(x))))
 	}
 

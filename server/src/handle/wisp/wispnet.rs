@@ -100,8 +100,8 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 		&mut self,
 		_: &mut dyn TransportRead,
 		_: &mut dyn TransportWrite,
-	) -> Result<(), WispError> {
-		Ok(())
+	) -> Result<Option<(CloseReason, WispError)>, WispError> {
+		Ok(None)
 	}
 
 	async fn handle_packet(
@@ -217,14 +217,16 @@ pub async fn handle_wispnet(stream: WispResult, id: String) -> Result<()> {
 
 	let extensions = vec![WispnetServerProtocolExtensionBuilder(net_id).into()];
 
-	let (mux, fut) = Box::pin(
-		ClientMux::new(read, write, Some(WispV2Handshake::new(extensions)))
-			.await
-			.context("failed to create client multiplexor")?
-			.with_required_extensions(&[WispnetServerProtocolExtension::ID]),
+	let (mux, fut) = ClientMux::new(
+		read,
+		write,
+		Some(WispV2Handshake::new(
+			extensions,
+			vec![WispnetServerProtocolExtension::ID],
+		)),
 	)
 	.await
-	.context("wispnet client did not have wispnet extension")?;
+	.context("failed to create client multiplexor")?;
 
 	let is_private = mux
 		.get_extensions()

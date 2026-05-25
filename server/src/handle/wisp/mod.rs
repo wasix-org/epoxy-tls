@@ -5,7 +5,7 @@ pub mod wispnet;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use cfg_if::cfg_if;
 use event_listener::Event;
 use futures_util::{future::Either, FutureExt, SinkExt, StreamExt};
@@ -46,12 +46,14 @@ async fn copy_fast(
 	let mut muxrx = muxrx.compat();
 	let mut muxtx = muxtx.compat_write();
 
-	let (tcprx, mut tcptx) = tcp.into_split();
+	let (tcprx, tcptx) = tcp.into_split();
 
 	#[cfg(feature = "speed-limit")]
 	let tcprx = read_limit.limit(tcprx);
 	#[cfg(feature = "speed-limit")]
 	let mut tcptx = write_limit.limit(tcptx);
+	#[cfg(not(feature = "speed-limit"))]
+	let mut tcptx = tcptx;
 
 	let mut tcprx = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
 
@@ -183,6 +185,43 @@ async fn forward_stream(
 				}
 			}
 		}
+		ClientStream::UdpSocks5(stream, target) => {
+			let closer = muxstream.get_close_handle();
+			let (mut read, write) = muxstream.into_split();
+			let mut write = write.into_async_write().compat_write();
+
+			let ret: anyhow::Result<()> = async move {
+				let mut data = vec![0u8; 65507];
+				loop {
+					select! {
+						size = stream.recv_from(&mut data) => {
+							let (size, new_target) = size?;
+							if new_target != target {
+								bail!("target changed while forwarding udp to {target} over socks5");
+							}
+							write.write_all(&data[..size]).await?;
+						}
+						data = read.next() => {
+							if let Some(data) = data.transpose()? {
+								stream.send_to(&data, target.clone()).await?;
+							} else {
+								break Ok(());
+							}
+						}
+					}
+				}
+			}
+			.await;
+
+			match ret {
+				Ok(()) => {
+					let _ = closer.close(CloseReason::Voluntary).await;
+				}
+				Err(_) => {
+					let _ = closer.close(CloseReason::Unexpected).await;
+				}
+			}
+		}
 		#[cfg(feature = "twisp")]
 		ClientStream::Pty(cmd, pty) => {
 			let closer = muxstream.get_close_handle();
@@ -291,19 +330,11 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	cfg_if! {
 		if #[cfg(feature = "twisp")] {
 			let twisp_map = twisp::new_map();
-			let (extensions, required_extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+			let (extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
 
-			let extensions = match extensions {
-				Some(mut exts) => {
-					exts.add_extension(twisp::new_ext(twisp_map.clone()));
-					Some(exts)
-				},
-				None => {
-					None
-				}
-			};
+			let extensions = extensions.map(|x| x.with_extension(twisp::new_ext(twisp_map.clone())));
 		} else {
-			let (extensions, required_extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+			let (extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
 		}
 	}
 
@@ -318,18 +349,14 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		.clock(async_speed_limit::clock::StandardClock)
 		.build();
 
-	let (mux, fut) = Box::pin(
-		Box::pin(ServerMux::new(
-			read,
-			write,
-			buffer_size,
-			if is_v2 { extensions } else { None },
-		))
-		.await
-		.context("failed to create server multiplexor")?
-		.with_required_extensions(&required_extensions),
-	)
-	.await?;
+	let (mux, fut) = Box::pin(ServerMux::new(
+		read,
+		write,
+		buffer_size,
+		if is_v2 { extensions } else { None },
+	))
+	.await
+	.context("failed to create server multiplexor")?;
 	let mux = Arc::new(mux);
 
 	debug!(

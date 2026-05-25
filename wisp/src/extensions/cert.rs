@@ -333,7 +333,7 @@ impl ProtocolExtensionBuilder for CertAuthProtocolExtensionBuilder {
 				required,
 			} => {
 				let mut challenge = [0u8; 64];
-				getrandom::getrandom(&mut challenge).map_err(CertAuthError::from)?;
+				getrandom::fill(&mut challenge).map_err(CertAuthError::from)?;
 				let challenge = Bytes::from(challenge.to_vec());
 
 				let required = *required;

@@ -5,7 +5,7 @@ use futures::{
 	Sink, Stream,
 	lock::{Mutex, OwnedMutexGuard},
 };
-use js_sys::{Array, Function, Uint8Array};
+use js_sys::{Array, Function};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{ClientMux, WispError, packet::StreamType};
@@ -41,7 +41,7 @@ struct WispProviderLocked {
 	mux: Option<ClientMux<WispProviderWrite>>,
 }
 
-type V2Func = Box<dyn Fn() -> (Option<JsWispV2Handshake>, Vec<u8>)>;
+type V2Func = Box<dyn Fn() -> Option<JsWispV2Handshake>>;
 struct WispProviderInner {
 	locked: Arc<Mutex<WispProviderLocked>>,
 
@@ -59,22 +59,18 @@ impl WispProviderInner {
 			Some(func) => {
 				let func: Function = func.unchecked_into();
 				Box::new(move || {
-					let ret = func
-						.call0(&JsValue::NULL)
-						.unwrap()
-						.unchecked_into::<Array>();
+					let v2 = func.call0(&JsValue::NULL).unwrap();
 
-					let v2 = ret.get(0);
 					let v2 = if v2.is_null_or_undefined() {
 						None
 					} else {
 						Some(to_wisp_v2_handshake(v2))
 					};
 
-					(v2, ret.get(1).unchecked_into::<Uint8Array>().to_vec())
+					v2
 				}) as V2Func
 			}
-			None => Box::new(|| (None, vec![])) as V2Func,
+			None => Box::new(|| None) as V2Func,
 		};
 		Self {
 			locked: Arc::new(Mutex::new(WispProviderLocked { service, mux: None })),
@@ -101,11 +97,8 @@ impl WispProviderInner {
 
 	async fn create_mux(&self, guard: &mut WispProviderLocked) -> Result<(), EpoxyError> {
 		let stream = guard.service.call(self.server.clone()).await?;
-		let (v2, extensions) = (self.v2.0)();
-		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2.map(|x| x.0))
-			.await?
-			.with_required_extensions(&extensions)
-			.await?;
+		let v2 = (self.v2.0)();
+		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2.map(|x| x.0)).await?;
 
 		spawn_local(async move {
 			let _ = fut.await;

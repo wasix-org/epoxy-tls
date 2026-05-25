@@ -14,8 +14,9 @@ use wisp_mux::{
 		AnyProtocolExtension, AnyProtocolExtensionBuilder, ProtocolExtension,
 		ProtocolExtensionBuilder,
 	},
+	packet::CloseReason,
 	stream::{MuxStreamAsyncRead, MuxStreamAsyncWrite},
-	ws::{WebSocketRead, WebSocketWrite},
+	ws::{TransportRead, TransportWrite},
 	WispError,
 };
 
@@ -53,19 +54,19 @@ impl ProtocolExtension for TWispServerProtocolExtension {
 
 	async fn handle_handshake(
 		&mut self,
-		_: &mut dyn WebSocketRead,
-		_: &mut dyn WebSocketWrite,
-	) -> std::result::Result<(), WispError> {
-		Ok(())
+		_: &mut dyn TransportRead,
+		_: &mut dyn TransportWrite,
+	) -> Result<Option<(CloseReason, WispError)>, WispError> {
+		Ok(None)
 	}
 
 	async fn handle_packet(
 		&mut self,
 		packet_type: u8,
 		mut packet: Bytes,
-		_: &mut dyn WebSocketRead,
-		_: &mut dyn WebSocketWrite,
-	) -> std::result::Result<(), WispError> {
+		_: &mut dyn TransportRead,
+		_: &mut dyn TransportWrite,
+	) -> Result<(), WispError> {
 		if packet_type == 0xF0 {
 			if packet.remaining() < 4 + 2 + 2 {
 				return Err(WispError::PacketTooSmall);

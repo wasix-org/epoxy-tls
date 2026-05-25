@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use anyhow::bail;
 use futures_util::{SinkExt, StreamExt};
 use log::debug;
 use tokio::{
@@ -188,6 +189,40 @@ pub async fn handle_wsproxy(
 						}
 						size = stream.recv(&mut data) => {
 							ws.write(data[..size?].to_vec()).await?;
+						}
+					}
+				}
+			}
+			.await;
+			match ret {
+				Ok(()) => {
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, "").await;
+				}
+				Err(x) => {
+					let _ = ws.close(CloseCode::NORMAL_CLOSURE, &x.to_string()).await;
+				}
+			}
+		}
+		ClientStream::UdpSocks5(stream, target) => {
+			let ret: anyhow::Result<()> = async {
+				let mut data = vec![0u8; 65507];
+				loop {
+					select! {
+						x = ws.read() => {
+							match x.transpose()? {
+								Some(WebSocketFrame::Data(data)) => {
+									stream.send_to(&data, target.clone()).await?;
+								}
+								Some(WebSocketFrame::Close | WebSocketFrame::Ignore) => {}
+								None => break Ok(()),
+							}
+						}
+						size = stream.recv_from(&mut data) => {
+							let (size, new_target) = size?;
+							if new_target != target {
+								bail!("target changed while forwarding udp to {target} over socks5");
+							}
+							ws.write(data[..size].to_vec()).await?;
 						}
 					}
 				}

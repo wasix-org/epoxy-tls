@@ -7,6 +7,10 @@ use anyhow::Context;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::BytesMut;
 use cfg_if::cfg_if;
+use fast_socks5::{
+	client::{Socks5Datagram, Socks5Stream},
+	util::target_addr::TargetAddr,
+};
 use futures_util::{SinkExt, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
@@ -44,6 +48,7 @@ fn blocked_set(stream_type: StreamType) -> &'static RegexSet {
 pub enum ClientStream {
 	Tcp(TcpStream),
 	Udp(UdpSocket),
+	UdpSocks5(Socks5Datagram<TcpStream>, TargetAddr),
 	#[cfg(feature = "twisp")]
 	Pty(tokio::process::Child, pty_process::Pty),
 	Wispnet(MuxStream<WispStreamWrite>, String),
@@ -227,9 +232,27 @@ impl ClientStream {
 			StreamType::Tcp => {
 				let ipaddr =
 					IpAddr::from_str(&packet.host).context("failed to parse hostname as ipaddr")?;
-				let stream = TcpStream::connect(SocketAddr::new(ipaddr, packet.port))
+
+				let stream = if let Some(socks5_server) = CONFIG.stream.socks5_server() {
+					Socks5Stream::connect(
+						socks5_server,
+						ipaddr.to_string(),
+						packet.port,
+						Default::default(),
+					)
 					.await
-					.with_context(|| format!("failed to connect to host {}", packet.host))?;
+					.with_context(|| {
+						format!(
+							"failed to connect to host {} over socks5 {}",
+							packet.host, socks5_server
+						)
+					})?
+					.get_socket()
+				} else {
+					TcpStream::connect(SocketAddr::new(ipaddr, packet.port))
+						.await
+						.with_context(|| format!("failed to connect to host {}", packet.host))?
+				};
 
 				if CONFIG.stream.tcp_nodelay {
 					stream
@@ -247,17 +270,44 @@ impl ClientStream {
 				let ipaddr =
 					IpAddr::from_str(&packet.host).context("failed to parse hostname as ipaddr")?;
 
-				let bind_addr = if ipaddr.is_ipv4() {
-					SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0)
+				if let Some(socks5_server) = CONFIG.stream.socks5_server() {
+					let bind_addr = if socks5_server.is_ipv4() {
+						SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+					} else {
+						SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0)
+					};
+					let backing = TcpStream::connect(socks5_server).await.with_context(|| {
+						format!("failed to connect to socks5 {}", socks5_server)
+					})?;
+					let dgram = Socks5Datagram::bind(backing, bind_addr)
+						.await
+						.with_context(|| {
+							format!(
+								"failed to connect to host {} over socks5 {}",
+								packet.host, socks5_server
+							)
+						})?;
+
+					Ok(ClientStream::UdpSocks5(
+						dgram,
+						TargetAddr::Ip(SocketAddr::new(ipaddr, packet.port)),
+					))
 				} else {
-					SocketAddr::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(), 0)
-				};
+					let bind_addr = if ipaddr.is_ipv4() {
+						SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+					} else {
+						SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0)
+					};
 
-				let stream = UdpSocket::bind(bind_addr).await?;
+					let stream = UdpSocket::bind(bind_addr).await?;
 
-				stream.connect(SocketAddr::new(ipaddr, packet.port)).await?;
+					stream
+						.connect(SocketAddr::new(ipaddr, packet.port))
+						.await
+						.with_context(|| format!("failed to connect to host {}", packet.host))?;
 
-				Ok(ClientStream::Udp(stream))
+					Ok(ClientStream::Udp(stream))
+				}
 			}
 			#[cfg(feature = "twisp")]
 			StreamType::Other(crate::handle::wisp::twisp::STREAM_TYPE) => {

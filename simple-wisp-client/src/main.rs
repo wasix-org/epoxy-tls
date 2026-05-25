@@ -34,7 +34,7 @@ use wisp_mux::{
 		AnyProtocolExtensionBuilder, ProtocolExtensionListExt,
 	},
 	packet::StreamType,
-	ws::{TokioWebsocketsTransport, TransportWrite, TransportExt},
+	ws::{TokioWebsocketsTransport, TransportExt, TransportWrite},
 	ClientMux, WispError, WispV2Handshake,
 };
 
@@ -148,14 +148,14 @@ async fn create_mux(
 	}
 
 	let (mux, fut) = if opts.wisp_v2 {
-		ClientMux::new(rx, tx, Some(WispV2Handshake::new(extensions)))
-			.await?
-			.with_required_extensions(extension_ids.as_slice())
-			.await?
+		ClientMux::new(
+			rx,
+			tx,
+			Some(WispV2Handshake::new(extensions, extension_ids)),
+		)
+		.await?
 	} else {
-		ClientMux::new(rx, tx, None)
-			.await?
-			.with_no_required_extensions()
+		ClientMux::new(rx, tx, None).await?
 	};
 
 	Ok((mux, fut))
