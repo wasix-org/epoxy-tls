@@ -1,0 +1,23 @@
+# Build artefacts
+target/
+**/target/
+
+# Frontend build output / dependencies
+client/node_modules/
+client/build/
+client/dist/
+**/node_modules/
+
+# Editor / OS cruft
+.direnv/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Secrets / local certs (build.rs and the server image never need these)
+**/*.pem
+
+# Container files themselves
+**/Dockerfile
+**/.dockerignore
