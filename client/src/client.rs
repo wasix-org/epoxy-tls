@@ -460,6 +460,13 @@ impl Client {
 				let negotiated_protocol = conn
 					.alpn_protocol()
 					.map(|x| String::from_utf8_lossy(x).into_owned());
+				// `Debug` is compiled out by `-Zfmt-debug=none`; `as_str` is a
+				// `stringify!`-based match, so it survives.
+				let protocol_version = conn.protocol_version().map(|version| {
+					version
+						.as_str()
+						.map_or_else(|| format!("0x{:04x}", u16::from(version)), str::to_string)
+				});
 				let cipher_suite = conn.negotiated_cipher_suite().map(|suite| {
 					let suite = suite.suite();
 					suite
@@ -469,7 +476,12 @@ impl Client {
 				let peer_certificates = conn.peer_certificates().map(|certs| {
 					certs.iter().map(|cert| cert.as_ref().to_vec()).collect()
 				});
-				let info = TlsStreamInfo::new(negotiated_protocol, cipher_suite, peer_certificates);
+				let info = TlsStreamInfo::new(
+					negotiated_protocol,
+					protocol_version,
+					cipher_suite,
+					peer_certificates,
+				);
 				let (rx, tx) = x.stream.split();
 				create_asyncread_js_tls_socket(rx, buffer_size, tx, info)
 			})

@@ -421,6 +421,7 @@ export class TlsStream {
 	read: ReadableStream<Uint8Array>;
 	write: WritableStream<Uint8Array>;
 	negotiatedProtocol: string | null;
+	protocolVersion: string | null;
 	cipherSuite: string | null;
 	peerCertificates: Uint8Array[];
 
@@ -430,6 +431,7 @@ export class TlsStream {
 		this.write = inner[1];
 		let info = inner[2];
 		this.negotiatedProtocol = info.negotiated_protocol() ?? null;
+		this.protocolVersion = info.protocol_version() ?? null;
 		this.cipherSuite = info.cipher_suite() ?? null;
 		this.peerCertificates = info.peer_certificates() ?? [];
 	}

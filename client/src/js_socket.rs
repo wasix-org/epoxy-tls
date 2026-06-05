@@ -31,6 +31,7 @@ extern "C" {
 #[wasm_bindgen]
 pub struct TlsStreamInfo {
 	negotiated_protocol: Option<String>,
+	protocol_version: Option<String>,
 	cipher_suite: Option<String>,
 	peer_certificates: Option<Vec<Vec<u8>>>,
 }
@@ -38,11 +39,13 @@ pub struct TlsStreamInfo {
 impl TlsStreamInfo {
 	pub fn new(
 		negotiated_protocol: Option<String>,
+		protocol_version: Option<String>,
 		cipher_suite: Option<String>,
 		peer_certificates: Option<Vec<Vec<u8>>>,
 	) -> Self {
 		Self {
 			negotiated_protocol,
+			protocol_version,
 			cipher_suite,
 			peer_certificates,
 		}
@@ -54,6 +57,12 @@ impl TlsStreamInfo {
 	/// The ALPN protocol the server selected, if any.
 	pub fn negotiated_protocol(&mut self) -> Option<String> {
 		self.negotiated_protocol.take()
+	}
+
+	/// The negotiated TLS version (e.g. `TLSv1_3`), or its hex code if rustls
+	/// doesn't have a name for it.
+	pub fn protocol_version(&mut self) -> Option<String> {
+		self.protocol_version.take()
 	}
 
 	/// The negotiated cipher suite's IANA name (e.g. `TLS13_AES_128_GCM_SHA256`),
