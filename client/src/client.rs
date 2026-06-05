@@ -32,7 +32,10 @@ use hyper::upgrade;
 use crate::{
 	EpoxyError, EpoxyJsValErrorExt,
 	http::{BoxError, EpoxyBody, HyperClient, HyperRequest, build_hyper_client},
-	js_socket::{JsSocket, create_asyncread_js_socket},
+	js_socket::{
+		JsSocket, JsTlsSocket, TlsStreamInfo, create_asyncread_js_socket,
+		create_asyncread_js_tls_socket,
+	},
 	js_types::RawHeaders,
 	provider::{StreamProvider, StreamProviderService, TlsAlpnMode, service::WasmProvider},
 };
@@ -442,13 +445,33 @@ impl Client {
 		host: String,
 		port: u16,
 		buffer_size: usize,
-	) -> Result<JsSocket, EpoxyError> {
+		alpn: Option<Vec<String>>,
+	) -> Result<JsTlsSocket, EpoxyError> {
+		let alpn = match alpn {
+			Some(protocols) if !protocols.is_empty() => TlsAlpnMode::Custom(protocols),
+			_ => TlsAlpnMode::None,
+		};
+
 		self.provider
-			.get_tls_stream(host, port, TlsAlpnMode::None)
+			.get_tls_stream(host, port, alpn)
 			.await
 			.map(|x| {
+				let conn = x.stream.get_ref().1;
+				let negotiated_protocol = conn
+					.alpn_protocol()
+					.map(|x| String::from_utf8_lossy(x).into_owned());
+				let cipher_suite = conn.negotiated_cipher_suite().map(|suite| {
+					let suite = suite.suite();
+					suite
+						.as_str()
+						.map_or_else(|| format!("0x{:04x}", u16::from(suite)), str::to_string)
+				});
+				let peer_certificates = conn.peer_certificates().map(|certs| {
+					certs.iter().map(|cert| cert.as_ref().to_vec()).collect()
+				});
+				let info = TlsStreamInfo::new(negotiated_protocol, cipher_suite, peer_certificates);
 				let (rx, tx) = x.stream.split();
-				create_asyncread_js_socket(rx, buffer_size, tx)
+				create_asyncread_js_tls_socket(rx, buffer_size, tx, info)
 			})
 	}
 }

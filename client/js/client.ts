@@ -1,4 +1,4 @@
-import { Client, ClientReqBuilder, JsSocket, Redirect } from "epoxy/wbg";
+import { Client, ClientReqBuilder, JsSocket, JsTlsSocket, Redirect } from "epoxy/wbg";
 import { SocketProvider } from "./provider";
 import { decode, encode, EpoxyResponse, EpoxyRawHeaders } from "./util";
 
@@ -285,6 +285,11 @@ let defaultUA =
 	globalThis?.navigator?.userAgent ||
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 let defaultRedirectLimit = 20;
+export interface TlsStreamOptions {
+	bufferSize?: number;
+	alpn?: string[];
+}
+
 export class EpoxyClient {
 	// @internal
 	client: Client;
@@ -388,9 +393,16 @@ export class EpoxyClient {
 	async connectTls(
 		host: string,
 		port: number,
-		bufferSize: number = 16384
+		options: TlsStreamOptions = {}
 	): Promise<TlsStream> {
-		return new TlsStream(await this.client.connect_tls(host, port, bufferSize));
+		return new TlsStream(
+			await this.client.connect_tls(
+				host,
+				port,
+				options.bufferSize ?? 16384,
+				options.alpn
+			)
+		);
 	}
 }
 
@@ -408,10 +420,17 @@ export class TcpStream {
 export class TlsStream {
 	read: ReadableStream<Uint8Array>;
 	write: WritableStream<Uint8Array>;
+	negotiatedProtocol: string | null;
+	cipherSuite: string | null;
+	peerCertificates: Uint8Array[];
 
 	// @internal
-	constructor(inner: JsSocket) {
+	constructor(inner: JsTlsSocket) {
 		this.read = inner[0];
 		this.write = inner[1];
+		let info = inner[2];
+		this.negotiatedProtocol = info.negotiated_protocol() ?? null;
+		this.cipherSuite = info.cipher_suite() ?? null;
+		this.peerCertificates = info.peer_certificates() ?? [];
 	}
 }

@@ -15,12 +15,62 @@ use crate::{EpoxyError, sink_map::SinkExtMap};
 #[wasm_bindgen(typescript_custom_section)]
 const JS_SOCKET_TS: &'static str = r#"
 export type JsSocket = [ReadableStream<Uint8Array>, WritableStream<Uint8Array>];
+export type JsTlsSocket = [ReadableStream<Uint8Array>, WritableStream<Uint8Array>, TlsStreamInfo];
 "#;
 
 #[wasm_bindgen]
 extern "C" {
 	#[wasm_bindgen(typescript_type = "JsSocket")]
 	pub type JsSocket;
+
+	#[wasm_bindgen(typescript_type = "JsTlsSocket")]
+	pub type JsTlsSocket;
+}
+
+/// Metadata about a negotiated TLS connection, handed back alongside the socket.
+#[wasm_bindgen]
+pub struct TlsStreamInfo {
+	negotiated_protocol: Option<String>,
+	cipher_suite: Option<String>,
+	peer_certificates: Option<Vec<Vec<u8>>>,
+}
+
+impl TlsStreamInfo {
+	pub fn new(
+		negotiated_protocol: Option<String>,
+		cipher_suite: Option<String>,
+		peer_certificates: Option<Vec<Vec<u8>>>,
+	) -> Self {
+		Self {
+			negotiated_protocol,
+			cipher_suite,
+			peer_certificates,
+		}
+	}
+}
+
+#[wasm_bindgen]
+impl TlsStreamInfo {
+	/// The ALPN protocol the server selected, if any.
+	pub fn negotiated_protocol(&mut self) -> Option<String> {
+		self.negotiated_protocol.take()
+	}
+
+	/// The negotiated cipher suite's IANA name (e.g. `TLS13_AES_128_GCM_SHA256`),
+	/// or its hex code if rustls doesn't have a name for it.
+	pub fn cipher_suite(&mut self) -> Option<String> {
+		self.cipher_suite.take()
+	}
+
+	/// The server's certificate chain as DER-encoded bytes, end-entity first.
+	pub fn peer_certificates(&mut self) -> Option<Vec<Uint8Array>> {
+		self.peer_certificates.take().map(|certs| {
+			certs
+				.into_iter()
+				.map(|der| Uint8Array::from(der.as_slice()))
+				.collect()
+		})
+	}
 }
 
 #[pin_project]
@@ -106,10 +156,23 @@ pub fn create_asyncread_js_socket(
 		write.into_sink().sink_map_err(Into::into),
 	)
 }
-pub fn create_js_socket(
+pub fn create_asyncread_js_tls_socket(
+	read: impl AsyncRead + 'static,
+	buffer_size: usize,
+	write: impl AsyncWrite + 'static,
+	info: TlsStreamInfo,
+) -> JsTlsSocket {
+	let arr = create_socket_array(
+		ReaderStream::new(read, buffer_size).map_err(Into::into),
+		write.into_sink().sink_map_err(Into::into),
+	);
+	arr.set(2, JsValue::from(info));
+	JsValue::from(arr).into()
+}
+fn create_socket_array(
 	stream: impl Stream<Item = Result<Bytes, EpoxyError>> + 'static,
 	sink: impl Sink<Bytes, Error = EpoxyError> + 'static,
-) -> JsSocket {
+) -> Array {
 	let arr = Array::new();
 	let read = ReadableStream::from_stream(
 		stream
@@ -124,5 +187,11 @@ pub fn create_js_socket(
 	.into_raw();
 	arr.set(0, read.into());
 	arr.set(1, write.into());
-	return JsValue::from(arr).into();
+	arr
+}
+pub fn create_js_socket(
+	stream: impl Stream<Item = Result<Bytes, EpoxyError>> + 'static,
+	sink: impl Sink<Bytes, Error = EpoxyError> + 'static,
+) -> JsSocket {
+	JsValue::from(create_socket_array(stream, sink)).into()
 }

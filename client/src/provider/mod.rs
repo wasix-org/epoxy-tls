@@ -1,10 +1,11 @@
 use std::{
+	collections::HashMap,
 	pin::Pin,
 	sync::Arc,
 	task::{Context, Poll},
 };
 
-use futures::{AsyncRead, AsyncWrite, future::Either};
+use futures::{AsyncRead, AsyncWrite, future::Either, lock::Mutex};
 use futures_rustls::{
 	TlsConnector,
 	client::TlsStream,
@@ -29,11 +30,12 @@ pub struct ProviderServiceReq {
 	pub port: u16,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum TlsAlpnMode {
 	None,
 	HttpAuto,
 	Http1Only,
+	Custom(Vec<String>),
 }
 
 #[derive(Clone, Copy)]
@@ -146,15 +148,15 @@ type StreamProviderBackendService =
 pub struct StreamProvider {
 	service: StreamProviderBackendService,
 
-	http_auto_config: Arc<ClientConfig>,
-	http_h1_config: Arc<ClientConfig>,
-	client_config: Arc<ClientConfig>,
+	configs: Mutex<HashMap<TlsAlpnMode, Arc<ClientConfig>>>,
 }
 
 impl StreamProvider {
-	pub fn new(service: StreamProviderBackendService) -> Result<Self, EpoxyError> {
+	fn create_client_config(
+		alpn_protocols: Option<Vec<Vec<u8>>>,
+	) -> Result<Arc<ClientConfig>, EpoxyError> {
 		let provider = Arc::new(futures_rustls::rustls::crypto::ring::default_provider());
-		let client_config = ClientConfig::builder_with_provider(provider.clone())
+		let mut client_config = ClientConfig::builder_with_provider(provider.clone())
 			.with_safe_default_protocol_versions()?
 			.with_root_certificates(
 				TLS_SERVER_ROOTS
@@ -164,29 +166,49 @@ impl StreamProvider {
 					.collect::<RootCertStore>(),
 			)
 			.with_no_client_auth();
-		let client_config = Arc::new(client_config);
 
-		let http_auto_config = {
-			let mut config = (*client_config).clone();
-			config.alpn_protocols = vec!["http/1.1".as_bytes().to_vec()];
+		if let Some(protocols) = alpn_protocols {
+			client_config.alpn_protocols = protocols;
+		}
 
-			#[cfg(feature = "full")]
-			config.alpn_protocols.insert(0, "h2".as_bytes().to_vec());
+		Ok(Arc::new(client_config))
+	}
 
-			Arc::new(config)
-		};
+	async fn get_client_config(
+		&self,
+		alpn_mode: TlsAlpnMode,
+	) -> Result<Arc<ClientConfig>, EpoxyError> {
+		let mut configs = self.configs.lock().await;
+		match configs.entry(alpn_mode) {
+			std::collections::hash_map::Entry::Occupied(val) => Ok(val.get().clone()),
+			std::collections::hash_map::Entry::Vacant(val) => {
+				let alpn_protocols = match val.key() {
+					TlsAlpnMode::None => None,
+					TlsAlpnMode::HttpAuto => {
+						#[cfg(feature = "full")]
+						let protocols =
+							vec!["h2".as_bytes().to_vec(), "http/1.1".as_bytes().to_vec()];
+						#[cfg(not(feature = "full"))]
+						let protocols = vec!["http/1.1".as_bytes().to_vec()];
+						Some(protocols)
+					}
+					TlsAlpnMode::Http1Only => Some(vec!["http/1.1".as_bytes().to_vec()]),
+					TlsAlpnMode::Custom(protocols) => {
+						Some(protocols.iter().map(|x| x.as_bytes().to_vec()).collect())
+					}
+				};
 
-		let http_h1_config = {
-			let mut config = (*client_config).clone();
-			config.alpn_protocols = vec!["http/1.1".as_bytes().to_vec()];
-			Arc::new(config)
-		};
+				let config = Self::create_client_config(alpn_protocols)?;
 
+				Ok(val.insert(config).clone())
+			}
+		}
+	}
+
+	pub fn new(service: StreamProviderBackendService) -> Result<Self, EpoxyError> {
 		Ok(Self {
 			service,
-			http_auto_config,
-			http_h1_config,
-			client_config,
+			configs: Mutex::new(HashMap::new()),
 		})
 	}
 
@@ -205,14 +227,7 @@ impl StreamProvider {
 		alpn: TlsAlpnMode,
 	) -> Result<ProviderEncryptedStream, EpoxyError> {
 		let unencrypted = self.get_stream(host.clone(), port).await?;
-		let connector = TlsConnector::from(
-			match alpn {
-				TlsAlpnMode::None => &self.client_config,
-				TlsAlpnMode::HttpAuto => &self.http_auto_config,
-				TlsAlpnMode::Http1Only => &self.http_h1_config,
-			}
-			.clone(),
-		);
+		let connector = TlsConnector::from(self.get_client_config(alpn).await?);
 
 		let encrypted = connector
 			.connect(
