@@ -10,7 +10,7 @@ workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-hyper = { git = "https://github.com/r58Playz/hyper", features = ["client", "http1"] } # replaced by patch
+hyper = { git = "https://github.com/r58Playz/hyper", version = "=1.8.1", features = ["client", "http1"] } # pinned so the patch wins over crates.io >1.8.1; bump alongside the fork
 hyper-util = { git = "https://github.com/r58Playz/hyper-util", branch = "tokio-client", features = ["client-pool"] }
 futures = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }

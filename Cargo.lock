@@ -758,7 +758,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "hyper 1.8.1",
+ "hyper",
  "hyper-util 0.1.20 (git+https://github.com/r58Playz/hyper-util?branch=tokio-client)",
  "instant",
  "js-sys",
@@ -799,7 +799,7 @@ dependencies = [
  "futures-util",
  "hickory-resolver",
  "http-body-util",
- "hyper 1.9.0",
+ "hyper",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static",
  "libc",
@@ -840,7 +840,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1329,27 +1329,6 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
- "itoa",
- "pin-project-lite",
- "smallvec",
- "tokio",
- "want",
-]
-
-[[package]]
-name = "hyper"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
-dependencies = [
- "atomic-waker",
- "bytes",
- "futures-channel",
- "futures-core",
- "h2",
- "http",
- "http-body",
- "httparse",
  "httpdate",
  "itoa",
  "pin-project-lite",
@@ -1364,7 +1343,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
 dependencies = [
- "hyper 1.9.0",
+ "hyper",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project-lite",
  "tokio",
@@ -1382,7 +1361,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
- "hyper 1.9.0",
+ "hyper",
  "libc",
  "pin-project-lite",
  "socket2 0.5.10",
@@ -1401,7 +1380,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
- "hyper 1.9.0",
+ "hyper",
  "pin-project-lite",
  "tokio",
  "tower-layer",
@@ -2379,7 +2358,7 @@ dependencies = [
  "itoa",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2392,7 +2371,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2681,7 +2660,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "humantime",
- "hyper 1.9.0",
+ "hyper",
  "sha2 0.11.0",
  "simple_moving_average",
  "tikv-jemallocator",
@@ -2833,7 +2812,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3145,7 +3124,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "hyper 1.9.0",
+ "hyper",
  "hyper-timeout",
  "hyper-util 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding",
@@ -3604,7 +3583,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3647,15 +3626,6 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets",
 ]
@@ -3971,3 +3941,8 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[patch.unused]]
+name = "h2"
+version = "0.4.13"
+source = "git+https://github.com/r58Playz/h2-wasm#621ed3c542142894f0824b9ed351a255a2d15cef"
