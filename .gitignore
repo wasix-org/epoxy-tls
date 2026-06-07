@@ -6,3 +6,4 @@
 /client/pnpm-lock.yaml
 /client/build/
 /client/dist/
+/client/target

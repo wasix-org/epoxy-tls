@@ -1,6 +1,0 @@
-[profile.release]
-opt-level = 'z'
-
-[patch.crates-io]
-h2 = { git = "https://github.com/r58Playz/h2-wasm" }
-hyper = { git = "https://github.com/r58Playz/hyper" }

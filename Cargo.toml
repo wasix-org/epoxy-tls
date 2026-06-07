@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["server", "client", "wisp", "simple-wisp-client"]
+members = ["server", "wisp", "simple-wisp-client"]
+# client is its own workspace (client/Cargo.toml) so its h2/hyper wasm fork
+# patches stay scoped to the wasm build and never reach the native server.
+exclude = ["client"]
 
 [profile.release]
 lto = true

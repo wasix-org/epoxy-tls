@@ -65,7 +65,7 @@ const provider = new WispSocketProvider(
 	new WebSocketJsProvider(),
 	/*
 	"wss://puter.cafe/",
-	() => [{ builders: [new PasswordExtBuilder(["", wisptoken])] }, [0x02]]
+	() => ({ builders: [new PasswordExtBuilder(["", wisptoken])], requiredExts: [0x02] })
 	*/
 	"wss://anura.pro/"
 );

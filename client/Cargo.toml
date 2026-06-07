@@ -61,3 +61,28 @@ features = ["wasm-bindgen"]
 [dependencies.getrandom]
 version = "0.4"
 features = ["wasm_js"]
+
+# Standalone workspace (excluded from the repo-root workspace) so the fork
+# patches below apply only to the wasm client, with their own Cargo.lock.
+[workspace]
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+module_name_repetitions = "allow"
+struct_excessive_bools = "allow"
+missing_fields_in_debug = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+
+[patch.crates-io]
+h2 = { git = "https://github.com/r58Playz/h2-wasm" }
+hyper = { git = "https://github.com/r58Playz/hyper" }
+
+[profile.release]
+lto = true
+debug = true
+strip = false
+panic = "abort"
+codegen-units = 1
+opt-level = 'z'
