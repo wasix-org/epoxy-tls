@@ -80,6 +80,8 @@ exts.drop();
 
 const client = new EpoxyClient(provider);
 
+globalThis.client = client;
+
 let ret = await client.fetch("https://httpbin.org/post", {
 	method: "POST",
 	body: JSON.stringify({ a: "b" }),

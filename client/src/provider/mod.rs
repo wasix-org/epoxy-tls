@@ -51,13 +51,29 @@ pub struct ProviderEncryptedStream {
 	#[cfg(feature = "full")]
 	h2_negotiated: bool,
 }
+/// Maps rustls's "peer closed connection without sending TLS close_notify"
+/// error to a clean EOF.
+///
+/// rustls reports a missing close_notify as [`std::io::ErrorKind::UnexpectedEof`],
+/// and nothing else on this read path does. close_notify only guards against
+/// truncation attacks, which require forging the underlying transport's EOF —
+/// but the TLS stream runs inside a wisp mux stream, whose framed close already
+/// provides a trustworthy end-of-stream signal. So a missing close_notify here
+/// is benign and can be treated as a normal EOF.
+fn map_close_notify(x: std::io::Result<usize>) -> std::io::Result<usize> {
+	match x {
+		Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(0),
+		other => other,
+	}
+}
+
 impl AsyncRead for ProviderEncryptedStream {
 	fn poll_read(
 		self: Pin<&mut Self>,
 		cx: &mut Context<'_>,
 		buf: &mut [u8],
 	) -> Poll<std::io::Result<usize>> {
-		self.project().stream.poll_read(cx, buf)
+		self.project().stream.poll_read(cx, buf).map(map_close_notify)
 	}
 
 	fn poll_read_vectored(
@@ -65,7 +81,10 @@ impl AsyncRead for ProviderEncryptedStream {
 		cx: &mut Context<'_>,
 		bufs: &mut [std::io::IoSliceMut<'_>],
 	) -> Poll<std::io::Result<usize>> {
-		self.project().stream.poll_read_vectored(cx, bufs)
+		self.project()
+			.stream
+			.poll_read_vectored(cx, bufs)
+			.map(map_close_notify)
 	}
 }
 impl AsyncWrite for ProviderEncryptedStream {

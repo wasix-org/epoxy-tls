@@ -482,7 +482,7 @@ impl Client {
 					cipher_suite,
 					peer_certificates,
 				);
-				let (rx, tx) = x.stream.split();
+				let (rx, tx) = x.split();
 				create_asyncread_js_tls_socket(rx, buffer_size, tx, info)
 			})
 	}
