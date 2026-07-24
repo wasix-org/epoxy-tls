@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures::{channel::oneshot, SinkExt};
 
 use crate::{
@@ -5,6 +7,7 @@ use crate::{
 	mux::send_info_packet,
 	packet::{CloseReason, ConnectPacket, ContinuePacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
+	timer::{NoTimer, Timer},
 	ws::{TransportRead, TransportReadExt, TransportWrite},
 	LockedWebSocketWrite, Role, WispError,
 };
@@ -107,9 +110,9 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 						handle.close().await?;
 
 						return Err(err);
-					} else {
-						send_info_packet(tx, &mut builders, Role::Client).await?;
 					}
+
+					send_info_packet(tx, &mut builders, Role::Client).await?;
 
 					let buffer_size =
 						validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
@@ -153,13 +156,35 @@ impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
 	/// if the extensions you need are available after the multiplexor has been created.
-	#[expect(clippy::new_ret_no_self)]
 	pub async fn new<R: TransportRead>(
 		rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,
 	) -> Result<MuxResult<ClientImpl, W>, WispError> {
-		Self::create(rx, tx, wisp_v2, ClientImpl, ClientActor).await
+		Self::create::<R, NoTimer>(rx, tx, wisp_v2, None, ClientImpl, ClientActor).await
+	}
+
+	/// Create a new client side multiplexor with a handshake timeout.
+	///
+	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
+	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
+	/// if the extensions you need are available after the multiplexor has been created.
+	pub async fn with_timeout<R: TransportRead, T: Timer>(
+		rx: R,
+		tx: W,
+		timer: T,
+		timeout: Duration,
+		wisp_v2: Option<WispV2Handshake>,
+	) -> Result<MuxResult<ClientImpl, W>, WispError> {
+		Self::create(
+			rx,
+			tx,
+			wisp_v2,
+			Some((timer, timeout)),
+			ClientImpl,
+			ClientActor,
+		)
+		.await
 	}
 
 	/// Create a new stream, multiplexed through Wisp.

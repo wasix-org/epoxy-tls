@@ -1,9 +1,12 @@
+use std::time::Duration;
+
 use futures::SinkExt;
 
 use crate::{
 	locked_sink::LockedWebSocketWrite,
 	packet::{CloseReason, ConnectPacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
+	timer::{NoTimer, Timer},
 	ws::{Payload, TransportRead, TransportReadExt, TransportWrite},
 	Role, WispError,
 };
@@ -120,12 +123,12 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 						handle.close().await?;
 
 						return Err(err);
-					} else {
-						tx.lock().await;
-						tx.get_handle()
-							.send(Packet::new_continue(0, self.buffer_size).encode())
-							.await?;
 					}
+
+					tx.lock().await;
+					tx.get_handle()
+						.send(Packet::new_continue(0, self.buffer_size).encode())
+						.await?;
 
 					// v2 client
 					Ok(WispHandshakeResult {
@@ -170,7 +173,6 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
 	/// if the extensions you need are available after the multiplexor has been created.
-	#[expect(clippy::new_ret_no_self)]
 	pub async fn new<R: TransportRead>(
 		rx: R,
 		tx: W,
@@ -185,7 +187,31 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 		};
 		let actor = ServerActor { stream_tx };
 
-		Self::create(rx, tx, wisp_v2, mux, actor).await
+		Self::create::<R, NoTimer>(rx, tx, wisp_v2, None, mux, actor).await
+	}
+
+	/// Create a new server-side multiplexor with a handshake timeout.
+	///
+	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
+	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
+	/// if the extensions you need are available after the multiplexor has been created.
+	pub async fn with_timeout<R: TransportRead, T: Timer>(
+		rx: R,
+		tx: W,
+		timer: T,
+		timeout: Duration,
+		buffer_size: u32,
+		wisp_v2: Option<WispV2Handshake>,
+	) -> Result<MuxResult<ServerImpl<W>, W>, WispError> {
+		let (stream_tx, stream_rx) = flume::unbounded();
+
+		let mux = ServerImpl {
+			buffer_size,
+			stream_rx,
+		};
+		let actor = ServerActor { stream_tx };
+
+		Self::create(rx, tx, wisp_v2, Some((timer, timeout)), mux, actor).await
 	}
 
 	/// Wait for a stream to be created.

@@ -1,6 +1,7 @@
 use std::{
 	collections::HashMap,
 	sync::atomic::{AtomicU32, Ordering},
+	time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -17,6 +18,7 @@ use wisp_mux::{
 	},
 	packet::{CloseReason, ConnectPacket},
 	stream::{MuxStream, MuxStreamRead, MuxStreamWrite},
+	timer::TokioTimer,
 	ws::{TransportRead, TransportWrite},
 	ClientMux, Role, WispError, WispV2Handshake,
 };
@@ -24,7 +26,7 @@ use wisp_mux::{
 use crate::{
 	route::{WispResult, WispStreamWrite},
 	stream::ClientStream,
-	CLIENTS,
+	CLIENTS, CONFIG,
 };
 
 struct WispnetClient {
@@ -216,16 +218,23 @@ pub async fn handle_wispnet(stream: WispResult, id: String) -> Result<()> {
 	let net_id = WISPNET_IDS.fetch_add(1, Ordering::SeqCst);
 
 	let extensions = vec![WispnetServerProtocolExtensionBuilder(net_id).into()];
+	let handshake = Some(WispV2Handshake::new(
+		extensions,
+		vec![WispnetServerProtocolExtension::ID],
+	));
 
-	let (mux, fut) = ClientMux::new(
-		read,
-		write,
-		Some(WispV2Handshake::new(
-			extensions,
-			vec![WispnetServerProtocolExtension::ID],
-		)),
-	)
-	.await
+	let (mux, fut) = if let Some(timeout) = CONFIG.wisp.handshake_timeout {
+		Box::pin(ClientMux::with_timeout(
+			read,
+			write,
+			TokioTimer,
+			Duration::from_secs(timeout),
+			handshake,
+		))
+		.await
+	} else {
+		Box::pin(ClientMux::new(read, write, handshake)).await
+	}
 	.context("failed to create client multiplexor")?;
 
 	let is_private = mux

@@ -15,7 +15,9 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes};
 
 use crate::{
-	Role, WispError, packet::CloseReason, ws::{PayloadMut, TransportRead, TransportWrite}
+	packet::CloseReason,
+	ws::{PayloadMut, TransportRead, TransportWrite},
+	Role, WispError,
 };
 
 mod private {

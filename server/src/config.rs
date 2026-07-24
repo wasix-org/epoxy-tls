@@ -179,6 +179,9 @@ pub struct WispConfig {
 	/// Wisp version 2 authentication extension advertised.
 	pub auth_extension: Option<ProtocolExtensionAuth>,
 
+	/// Handshake timeout length in seconds
+	pub handshake_timeout: Option<u64>,
+
 	#[cfg(feature = "speed-limit")]
 	/// Read limit in bytes/second for all streams in a wisp connection.
 	pub read_limit: f64,
@@ -370,6 +373,8 @@ impl Default for WispConfig {
 			buffer_size: 128,
 			allow_wsproxy: true,
 			prefix: String::new(),
+
+			handshake_timeout: None,
 
 			#[cfg(feature = "speed-limit")]
 			read_limit: f64::INFINITY,

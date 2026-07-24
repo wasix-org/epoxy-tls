@@ -10,6 +10,7 @@ mod locked_sink;
 mod mux;
 pub mod packet;
 pub mod stream;
+pub mod timer;
 pub mod ws;
 
 pub use mux::*;
@@ -33,6 +34,9 @@ pub enum WispError {
 	/// The Wisp protocol version was incompatible.
 	#[error("Incompatible Wisp protocol version: found {0} but needed {1}")]
 	IncompatibleProtocolVersion(WispVersion, WispVersion),
+	/// The Wisp handshake timed out.
+	#[error("Handshake timed out")]
+	HandshakeTimedOut,
 
 	/// The stream was closed already.
 	#[error("Stream already closed")]

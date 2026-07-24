@@ -22,6 +22,7 @@ use uuid::Uuid;
 use wisp_mux::{
 	packet::{CloseReason, ConnectPacket},
 	stream::MuxStream,
+	timer::TokioTimer,
 	ServerMux,
 };
 use wispnet::route_wispnet;
@@ -349,13 +350,25 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 		.clock(async_speed_limit::clock::StandardClock)
 		.build();
 
-	let (mux, fut) = Box::pin(ServerMux::new(
-		read,
-		write,
-		buffer_size,
-		if is_v2 { extensions } else { None },
-	))
-	.await
+	let (mux, fut) = if let Some(timeout) = CONFIG.wisp.handshake_timeout {
+		Box::pin(ServerMux::with_timeout(
+			read,
+			write,
+			TokioTimer,
+			Duration::from_secs(timeout),
+			buffer_size,
+			if is_v2 { extensions } else { None },
+		))
+		.await
+	} else {
+		Box::pin(ServerMux::new(
+			read,
+			write,
+			buffer_size,
+			if is_v2 { extensions } else { None },
+		))
+		.await
+	}
 	.context("failed to create server multiplexor")?;
 	let mux = Arc::new(mux);
 

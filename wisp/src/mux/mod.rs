@@ -1,9 +1,16 @@
 mod client;
 pub(crate) mod inner;
 mod server;
-use std::{future::Future, pin::Pin};
+use std::{
+	future::Future,
+	pin::{pin, Pin},
+	time::Duration,
+};
 
-use futures::SinkExt;
+use futures::{
+	future::{select, Either},
+	SinkExt,
+};
 use inner::{MultiplexorActor, MuxInner, WsEvent};
 
 pub use client::ClientImpl;
@@ -16,6 +23,7 @@ use crate::{
 	extensions::{udp::UdpProtocolExtension, AnyProtocolExtension, AnyProtocolExtensionBuilder},
 	inner::MuxInnerResult,
 	packet::{CloseReason, InfoPacket, Packet, PacketType},
+	timer::Timer,
 	ws::{TransportRead, TransportWrite},
 	LockedWebSocketWrite, LockedWebSocketWriteGuard, Role, WispError, WISP_VERSION,
 };
@@ -140,18 +148,32 @@ pub struct Multiplexor<M: MultiplexorImpl<W>, W: TransportWrite> {
 
 #[expect(private_bounds)]
 impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
-	async fn create<R>(
+	async fn create<R, T>(
 		mut rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,
+		timer: Option<(T, Duration)>,
 		mut muxer: M,
 		actor: M::Actor,
 	) -> Result<MuxResult<M, W>, WispError>
 	where
 		R: TransportRead,
+		T: Timer,
 	{
 		let mut tx = LockedWebSocketWrite::new(tx);
-		let handshake_result = muxer.handshake(&mut rx, &mut tx, wisp_v2).await?;
+		let handshake_result = if let Some((mut timer, duration)) = timer {
+			match select(
+				pin!(muxer.handshake(&mut rx, &mut tx, wisp_v2)),
+				pin!(timer.sleep(duration)),
+			)
+			.await
+			{
+				Either::Left((ret, _)) => ret?,
+				Either::Right(_) => return Err(WispError::HandshakeTimedOut),
+			}
+		} else {
+			muxer.handshake(&mut rx, &mut tx, wisp_v2).await?
+		};
 		let (extensions, extra_packet) = handshake_result.kind.into_parts();
 
 		let MuxInnerResult { mux, actor_tx } = MuxInner::new(

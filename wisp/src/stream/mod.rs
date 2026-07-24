@@ -184,7 +184,6 @@ impl<W: TransportWrite> MuxStreamWrite<W> {
 	pub fn into_async_write(self) -> MuxStreamAsyncWrite<W> {
 		MuxStreamAsyncWrite::new(self)
 	}
-
 }
 
 impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
