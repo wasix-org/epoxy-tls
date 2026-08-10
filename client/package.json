@@ -1,6 +1,6 @@
 {
 	"name": "@mercuryworkshop/epoxy-tls",
-	"version": "3.0.0-alpha.1",
+	"version": "3.0.0-alpha.2",
 	"description": "An end-to-end encrypted HTTP and WebSocket client running TLS in WebAssembly",
 	"license": "MIT",
 	"type": "module",
