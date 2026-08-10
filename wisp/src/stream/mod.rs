@@ -93,14 +93,27 @@ impl<W: TransportWrite> Stream for MuxStreamRead<W> {
 
 			if self.read_cnt > self.info.target_flow_control {
 				ready!(self.write.poll_lock(cx));
-				let mut handle = self.write.get_handle();
-				if let Err(err) = ready!(handle.poll_ready_unpin(cx)) {
-					return Poll::Ready(Some(Err(err)));
+
+				// The shadowed `ready!` above stashes `chunk`, so the retry resumes here.
+				let readied = self.write.get().poll_ready(cx);
+				match readied {
+					Poll::Pending => {
+						self.write.unlock_and_wait(cx);
+						self.chunk = Some(chunk);
+						return Poll::Pending;
+					}
+					Poll::Ready(Err(err)) => {
+						self.write.unlock();
+						return Poll::Ready(Some(Err(err)));
+					}
+					Poll::Ready(Ok(())) => {}
 				}
 
 				let pkt =
 					Packet::new_continue(self.info.id, self.info.flow_add(self.read_cnt)).encode();
-				if let Err(err) = handle.start_send_unpin(pkt) {
+				let sent = self.write.get().start_send(pkt);
+				self.write.unlock();
+				if let Err(err) = sent {
 					return Poll::Ready(Some(Err(err)));
 				}
 
@@ -201,17 +214,36 @@ impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 
 		if self.chunk.is_some() {
 			ready!(self.write.poll_lock(cx));
-			let mut handle = self.write.get_handle();
-			ready!(handle.poll_ready_unpin(cx))?;
+
+			// See `LockedSink::unlock_and_wait` for why `Pending` re-queues.
+			let readied = self.write.get().poll_ready(cx);
+			match readied {
+				Poll::Pending => {
+					self.write.unlock_and_wait(cx);
+					return Poll::Pending;
+				}
+				Poll::Ready(Err(err)) => {
+					self.write.unlock();
+					return Poll::Ready(Err(err));
+				}
+				Poll::Ready(Ok(())) => {}
+			}
 
 			if let Some(chunk) = self.chunk.take() {
 				let packet = Packet::new_data(self.info.id, chunk).encode();
-				handle.start_send_unpin(packet)?;
+				let sent = self.write.get().start_send(packet);
+
+				if let Err(err) = sent {
+					self.write.unlock();
+					return Poll::Ready(Err(err));
+				}
 
 				if self.info.flow_status == FlowControl::EnabledTrackAmount {
 					self.info.flow_dec();
 				}
 			}
+
+			self.write.unlock();
 		}
 
 		Poll::Ready(Ok(()))
@@ -226,14 +258,30 @@ impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 
 	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
 		ready!(self.write.poll_lock(cx));
-		let mut handle = self.write.get_handle();
 
 		if self.chunk.is_some() {
-			ready!(handle.poll_ready_unpin(cx))?;
+			// See `LockedSink::unlock_and_wait` for why `Pending` re-queues.
+			let readied = self.write.get().poll_ready(cx);
+			match readied {
+				Poll::Pending => {
+					self.write.unlock_and_wait(cx);
+					return Poll::Pending;
+				}
+				Poll::Ready(Err(err)) => {
+					self.write.unlock();
+					return Poll::Ready(Err(err));
+				}
+				Poll::Ready(Ok(())) => {}
+			}
 
 			if let Some(chunk) = self.chunk.take() {
 				let packet = Packet::new_data(self.info.id, chunk).encode();
-				handle.start_send_unpin(packet)?;
+				let sent = self.write.get().start_send(packet);
+
+				if let Err(err) = sent {
+					self.write.unlock();
+					return Poll::Ready(Err(err));
+				}
 
 				if self.info.flow_status == FlowControl::EnabledTrackAmount {
 					self.info.flow_dec();
@@ -241,16 +289,21 @@ impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 			}
 		}
 
-		ready!(handle.poll_flush_unpin(cx))?;
-		Poll::Ready(Ok(()))
+		let flushed = self.write.get().poll_flush(cx);
+		match flushed {
+			Poll::Pending => {
+				self.write.unlock_and_wait(cx);
+				Poll::Pending
+			}
+			Poll::Ready(res) => {
+				self.write.unlock();
+				Poll::Ready(res)
+			}
+		}
 	}
 
 	fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-		if let Some(oneshot) = &mut self.oneshot {
-			let ret = ready!(oneshot.poll_unpin(cx));
-			self.oneshot.take();
-			Poll::Ready(ret.map_err(|_| WispError::MuxMessageFailedToSend)?)
-		} else {
+		if self.oneshot.is_none() {
 			ready!(self.as_mut().poll_flush(cx))?;
 
 			ready!(self.inner.poll_ready_unpin(cx))
@@ -267,11 +320,33 @@ impl<W: TransportWrite> Sink<Payload> for MuxStreamWrite<W> {
 				tx,
 			);
 
-			self.inner
-				.start_send_unpin(pkt)
-				.map_err(|_| WispError::MuxMessageFailedToSend)?;
+			// Keep `oneshot` set only while a Close is genuinely in flight: if the send
+			// failed, its sender is already gone, and leaving the receiver installed would
+			// send a retried `poll_close` straight to awaiting a reply nobody can make.
+			if self.inner.start_send_unpin(pkt).is_err() {
+				self.oneshot = None;
+				return Poll::Ready(Err(WispError::MuxMessageFailedToSend));
+			}
+		}
 
-			Poll::Pending
+		// Flushes the actor channel and polls the receiver in this same call on purpose —
+		// see `MuxStreamAsyncWrite::poll_close`, which had the same two bugs.
+		if ready!(self.inner.poll_flush_unpin(cx)).is_err() {
+			self.oneshot = None;
+			return Poll::Ready(Err(WispError::MuxMessageFailedToSend));
+		}
+
+		let oneshot = self
+			.oneshot
+			.as_mut()
+			.expect("close oneshot was just installed");
+		let ret = ready!(oneshot.poll_unpin(cx));
+		self.oneshot = None;
+
+		match ret.map_err(|_| WispError::MuxMessageFailedToSend)? {
+			// Already gone is already closed — see `MuxStreamAsyncWrite::poll_close`.
+			Ok(()) | Err(WispError::InvalidStreamId(_)) => Poll::Ready(Ok(())),
+			Err(err) => Poll::Ready(Err(err)),
 		}
 	}
 }

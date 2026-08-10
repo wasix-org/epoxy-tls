@@ -73,8 +73,15 @@ impl WakerList {
 		self.inner.remove(key);
 	}
 
-	pub fn get_next(&mut self) -> Option<Waker> {
-		self.inner.iter_mut().find_map(|x| x.1.wake())
+	/// Takes the wakers of every queued waiter, marking them all woken.
+	///
+	/// Deliberately not "wake one": a woken task is not obliged to take the lock — it may
+	/// be re-polled for something else entirely and never come back — and waking one at a
+	/// time makes that task swallow the handoff and strand the rest. Everyone retries and
+	/// re-queues instead; on a single-threaded executor with a handful of streams the
+	/// extra polls are cheap next to a stall.
+	pub fn take_all(&mut self) -> Vec<Waker> {
+		self.inner.iter_mut().filter_map(|x| x.1.wake()).collect()
 	}
 }
 
@@ -145,17 +152,53 @@ impl<S: Sink<I>, I> SinkState<S, I> {
 	}
 
 	pub fn unlock(&self) {
-		let mut locked = self.lock_waiters();
+		let mut waiters = self.lock_waiters();
 		self.locked.store(false, Ordering::Release);
-		if let Some(next) = locked.get_next() {
-			drop(locked);
+		let wake = waiters.take_all();
+		drop(waiters);
 
-			next.wake();
+		for waker in wake {
+			waker.wake();
 		}
 	}
 
+	/// Release the sink without waking anyone.
+	///
+	/// Only for `unlock_and_wait`, which is handing the lock back *because the sink is not
+	/// ready*. Waking the queue there would wake tasks that are waiting on that same
+	/// not-ready sink, and each of them would wake the rest right back — see
+	/// `LockedSink::unlock_and_wait`.
+	pub fn unlock_silent(&self) {
+		self.locked.store(false, Ordering::Release);
+	}
+
+	pub fn add_waiter(&self, cx: &mut Context<'_>) -> usize {
+		self.lock_waiters().add(cx)
+	}
+
+	pub fn update_waiter(&self, key: usize, cx: &mut Context<'_>) {
+		self.lock_waiters().update(key, cx);
+	}
+
 	pub fn remove(&self, key: usize) {
-		self.lock_waiters().remove(key);
+		let mut waiters = self.lock_waiters();
+		waiters.remove(key);
+
+		// A waiter that leaves may have been holding a wakeup handed to it by `unlock`.
+		// If the sink is free there is no one left to call `unlock` again, so anyone still
+		// sleeping would sleep forever. Pass it on.
+		//
+		// On the acquire path in `poll_lock` the sink is already locked (the atomic swap
+		// happened in `lock`), so this costs nothing there.
+		if self.locked.load(Ordering::Acquire) {
+			return;
+		}
+		let wake = waiters.take_all();
+		drop(waiters);
+
+		for waker in wake {
+			waker.wake();
+		}
 	}
 }
 
@@ -179,6 +222,11 @@ impl<S: Sink<I>, I> Clone for LockedSink<S, I> {
 
 impl<S: Sink<I>, I> Drop for LockedSink<S, I> {
 	fn drop(&mut self) {
+		// Leaving a slot behind leaks a `Sleeping` waiter holding a dead waker, which
+		// every later `unlock` then wakes for nothing.
+		if let Some(pos) = self.pos.take() {
+			self.inner.remove(pos);
+		}
 		self.unlock();
 	}
 }
@@ -245,12 +293,61 @@ impl<S: Sink<I>, I> LockedSink<S, I> {
 		}
 	}
 
+	/// Give the lock back from a `poll_*` that is returning `Pending`, staying queued for
+	/// it.
+	///
+	/// The sink underneath holds exactly **one** waker. Epoxy's is a `wasm_streams`
+	/// `IntoSink` whose `ready_fut`/`write_fut` are single `JsFuture`s, and polling a
+	/// `JsFuture` replaces the waker it was last polled with. So a task that hands the
+	/// lock back mid-operation can have its wakeup taken by whoever locks next, and is
+	/// then unreachable: the sink no longer knows about it and it is in no queue. That
+	/// showed up on the wire as a wisp stream sending CONNECT and never writing another
+	/// byte while its siblings ran normally. Sitting in the waiter list means the next
+	/// `unlock` brings it back whether or not its waker survived.
+	///
+	/// The lock is *not* simply held across `Pending` instead: nothing obliges a caller to
+	/// re-poll the same method, and `futures-rustls` does exactly that — having written its
+	/// `ClientHello` it abandons a pending `poll_flush` and reads instead. A held lock would
+	/// never come back, deadlocking every other stream and the mux actor with it.
+	///
+	/// Releases the lock *without* waking the queue, unlike [`Self::unlock`]. We are only
+	/// here because the sink itself is not ready, and everyone queued is waiting on that
+	/// same sink, so waking them just has them find it not ready and wake us back — two
+	/// writers on a stalled sink ping-pong forever and never make progress. Nobody is
+	/// stranded by the silence: the sink is holding *our* waker right now (we polled it
+	/// last), so we are the one it wakes when it opens, and the plain `unlock` that ends
+	/// our operation is what drains the queue. If we are dropped before that, `Drop` ->
+	/// `SinkState::remove` hands the wakeup on.
+	///
+	/// Queues before releasing, so an `unlock` racing us on another thread cannot wake the
+	/// list in the window where we are in neither the list nor the lock.
+	pub fn unlock_and_wait(&mut self, cx: &mut Context<'_>) {
+		match self.pos {
+			Some(pos) => self.inner.update_waiter(pos, cx),
+			None => self.pos = Some(self.inner.add_waiter(cx)),
+		}
+
+		if self.locked {
+			self.locked = false;
+			self.inner.unlock_silent();
+		}
+	}
+
 	#[expect(clippy::mut_from_ref)]
 	pub fn get(&self) -> Pin<&mut S> {
 		debug_assert!(self.locked);
 		// SAFETY: we are locked
 		unsafe { self.inner.get() }
 	}
+
+	/// Take the lock as an owned guard that unlocks when dropped.
+	///
+	/// Only safe to use where the guard is held across the whole operation, i.e. from an
+	/// `async fn` that `.await`s on it. **Do not use this from a hand-written `poll_*`**:
+	/// `ready!`-ing on the sink drops the guard on `Pending`, which releases the lock
+	/// while the sink still holds your waker, and the next task to poll that sink will
+	/// overwrite it. See `MuxStreamAsyncWrite::poll_write` for the full failure mode; use
+	/// `poll_lock` + `get` + an explicit `unlock` on the ready paths instead.
 	pub fn get_handle(&mut self) -> LockedSinkHandle<S, I> {
 		debug_assert!(self.locked);
 		self.locked = false;

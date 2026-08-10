@@ -109,19 +109,30 @@ async function compileRust(folder, features) {
 		}
 	);
 
-	await run("wasm-bindgen", [
-		"--target",
-		"web",
-		"--out-dir",
-		folder,
-		path.join(
-			"..",
-			"target",
-			"wasm32-unknown-unknown",
-			"release",
-			"epoxy_client.wasm"
-		),
-	]);
+	// Ask cargo where it actually put the artifact rather than assuming. `client` is its
+	// own workspace, so `cargo build` writes to `client/target` unless CARGO_TARGET_DIR
+	// or a config says otherwise — while this used to hardcode `../target`, the *root*
+	// workspace's directory. When both exist the build silently bundles whatever stale
+	// wasm is sitting in the root one: it is a real file of the right name, so nothing
+	// fails, and the glue is regenerated from it so even the mtimes look fresh. Every
+	// source change appears to compile and none of it reaches the bundle.
+	const meta = JSON.parse(
+		await new Promise((res, rej) =>
+			processExec(
+				"cargo metadata --format-version 1 --no-deps",
+				{ maxBuffer: 1 << 26 },
+				(err, stdout) => (err ? rej(err) : res(stdout))
+			)
+		)
+	);
+	const cargoWasm = path.join(
+		meta.target_directory,
+		"wasm32-unknown-unknown",
+		"release",
+		"epoxy_client.wasm"
+	);
+
+	await run("wasm-bindgen", ["--target", "web", "--out-dir", folder, cargoWasm]);
 
 	const bindgenPath = path.join(folder, "epoxy_client.js");
 	let bindgen = await fs.readFile(bindgenPath, "utf8");
