@@ -4,7 +4,10 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{
 	EpoxyError,
-	provider::{ProviderServiceReq, ProviderUnencryptedStream, wisp::WispProviderStream},
+	provider::{
+		ProviderServiceReq, ProviderUnencryptedStream,
+		wisp::{WispProviderReq, WispProviderStream},
+	},
 };
 
 pub trait ProviderService<T> {
@@ -77,7 +80,7 @@ impl<T, U, E> ProviderService<T> for BoxProviderService<T, U, E> {
 
 #[wasm_bindgen]
 pub struct WasmWispProvider(
-	#[wasm_bindgen(skip)] pub BoxProviderService<String, WispProviderStream, EpoxyError>,
+	#[wasm_bindgen(skip)] pub BoxProviderService<WispProviderReq, WispProviderStream, EpoxyError>,
 );
 #[wasm_bindgen]
 pub struct WasmProvider(

@@ -11,13 +11,10 @@ use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{ClientMux, WispError, packet::StreamType};
 
 use crate::{
-	EpoxyError,
-	js_types::{JsWispV2ConnectionPrefs, WispExtensionList},
-	provider::{
+	EpoxyError, EpoxyJsValErrorExt, client::ws_protocol, js_types::{JsWispV2ConnectionPrefs, WispExtensionList}, provider::{
 		service::{WasmProvider, WasmWispProvider},
 		wisp::extension::{JsWispV2Handshake, RefScope, extension_to_jsval, to_wisp_v2_handshake},
-	},
-	send_wrapper::SendWrapper,
+	}, send_wrapper::SendWrapper,
 };
 
 use super::{
@@ -36,12 +33,17 @@ pub struct WispProviderStream {
 	pub write: WispProviderWrite,
 }
 
+pub struct WispProviderReq {
+	pub server: String,
+	pub protocol: Option<String>,
+}
+
 struct WispProviderLocked {
-	service: BoxProviderService<String, WispProviderStream, EpoxyError>,
+	service: BoxProviderService<WispProviderReq, WispProviderStream, EpoxyError>,
 	mux: Option<ClientMux<WispProviderWrite>>,
 }
 
-type V2Func = Box<dyn Fn() -> Option<JsWispV2Handshake>>;
+type V2Func = Box<dyn Fn() -> Result<Option<JsWispV2Handshake>, EpoxyError>>;
 struct WispProviderInner {
 	locked: Arc<Mutex<WispProviderLocked>>,
 
@@ -51,7 +53,7 @@ struct WispProviderInner {
 
 impl WispProviderInner {
 	pub fn new(
-		service: BoxProviderService<String, WispProviderStream, EpoxyError>,
+		service: BoxProviderService<WispProviderReq, WispProviderStream, EpoxyError>,
 		server: String,
 		v2: Option<JsWispV2ConnectionPrefs>,
 	) -> Self {
@@ -59,18 +61,16 @@ impl WispProviderInner {
 			Some(func) => {
 				let func: Function = func.unchecked_into();
 				Box::new(move || {
-					let v2 = func.call0(&JsValue::NULL).unwrap();
+					let v2 = func.call0(&JsValue::NULL).js_error()?;
 
-					let v2 = if v2.is_null_or_undefined() {
-						None
+					if v2.is_null_or_undefined() {
+						Ok(None)
 					} else {
-						Some(to_wisp_v2_handshake(v2))
-					};
-
-					v2
+						Ok(Some(to_wisp_v2_handshake(v2)))
+					}
 				}) as V2Func
 			}
-			None => Box::new(|| None) as V2Func,
+			None => Box::new(|| Ok(None)) as V2Func,
 		};
 		Self {
 			locked: Arc::new(Mutex::new(WispProviderLocked { service, mux: None })),
@@ -96,8 +96,14 @@ impl WispProviderInner {
 	}
 
 	async fn create_mux(&self, guard: &mut WispProviderLocked) -> Result<(), EpoxyError> {
-		let stream = guard.service.call(self.server.clone()).await?;
-		let v2 = (self.v2.0)();
+		let v2 = (self.v2.0)()?;
+		let stream = guard
+			.service
+			.call(WispProviderReq {
+				server: self.server.clone(),
+				protocol: v2.is_some().then(ws_protocol),
+			})
+			.await?;
 		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2.map(|x| x.0)).await?;
 
 		spawn_local(async move {

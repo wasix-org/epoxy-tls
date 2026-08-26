@@ -48,18 +48,27 @@ abstract class Provider<T, P> {
 
 export class JsProvider extends Provider<EpxJsProvider, WasmWispProvider> {
 	constructor(
-		func: (host: string) => Promise<ProviderResult> | ProviderResult
+		func: (
+			host: string,
+			protocol?: string
+		) => Promise<ProviderResult> | ProviderResult
 	) {
-		super(new EpxJsProvider(async (host) => await func(host)), (x) =>
-			x.box_wisp()
+		super(
+			new EpxJsProvider(
+				async (host, protocol) =>
+					await func(host, protocol as string | undefined)
+			),
+			(x) => x.box_wisp()
 		);
 	}
 }
 
 export class WebSocketJsProvider extends JsProvider {
 	constructor() {
-		super(async (host) => {
-			let stream = new WebSocketStream<Uint8Array<ArrayBuffer>>(host);
+		super(async (host, protocol) => {
+			let stream = new WebSocketStream<Uint8Array<ArrayBuffer>>(host, {
+				protocols: protocol ? [protocol] : [],
+			});
 			let { readable, writable } = await stream.opened;
 
 			return [readable, writable];
@@ -75,7 +84,7 @@ export class JsSocketProvider extends Provider<EpxJsProvider, WasmProvider> {
 		) => Promise<ProviderResult> | ProviderResult
 	) {
 		super(
-			new EpxJsProvider(async (host, port) => await func(host, port)),
+			new EpxJsProvider(async (host, port) => await func(host, port as number)),
 			(x) => x.box()
 		);
 	}

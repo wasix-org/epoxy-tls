@@ -6,8 +6,8 @@ use futures::{
 	stream::{AbortHandle, Abortable},
 };
 use http::{
-	HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, Uri, Version,
-	header, request, response,
+	HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, Uri, Version, header,
+	request, response,
 };
 use http_body::Body;
 use http_body_util::BodyExt;
@@ -25,9 +25,9 @@ use wasm_bindgen::{
 use web_sys::AbortSignal;
 
 #[cfg(feature = "full")]
-use tower::Layer;
-#[cfg(feature = "full")]
 use hyper::upgrade;
+#[cfg(feature = "full")]
+use tower::Layer;
 
 use crate::{
 	EpoxyError, EpoxyJsValErrorExt,
@@ -46,9 +46,15 @@ export function ws_key() {
 	crypto.getRandomValues(key);
 	return btoa(String.fromCharCode.apply(null, key));
 }
+export function ws_protocol() {
+      let key = new Uint8Array(16);
+      crypto.getRandomValues(key);
+      return Array.from(key, x => x.toString(16).padStart(2, '0')).join('');
+}
 ")]
 extern "C" {
 	pub fn ws_key() -> String;
+	pub fn ws_protocol() -> String;
 }
 
 #[wasm_bindgen]
@@ -473,9 +479,9 @@ impl Client {
 						.as_str()
 						.map_or_else(|| format!("0x{:04x}", u16::from(suite)), str::to_string)
 				});
-				let peer_certificates = conn.peer_certificates().map(|certs| {
-					certs.iter().map(|cert| cert.as_ref().to_vec()).collect()
-				});
+				let peer_certificates = conn
+					.peer_certificates()
+					.map(|certs| certs.iter().map(|cert| cert.as_ref().to_vec()).collect());
 				let info = TlsStreamInfo::new(
 					negotiated_protocol,
 					protocol_version,

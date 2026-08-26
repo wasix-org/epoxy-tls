@@ -7,7 +7,7 @@ export type RawHeaders = RawHeader[];
 
 export type ProviderResult = [ReadableStream<Uint8Array>, WritableStream<Uint8Array>];
 export type MaybePromise<T> = T | Promise<T>;
-export type JsProviderCallback = (...args: [host: string] | [host: string, port: number]) => MaybePromise<ProviderResult>;
+export type JsProviderCallback = (host: string, portOrProtocol: number | string | undefined) => MaybePromise<ProviderResult>;
 export type EitherProviderSelector = (host: string, port: number) => "left" | "right";
 
 export type WispRole = "client" | "server";
@@ -17,7 +17,7 @@ export type JsProtocolExtensionEncode = () => Uint8Array;
 export type JsProtocolExtensionHandshake = (read: JsTransportRead, write: JsTransportWrite) => MaybePromise<void>;
 export type JsProtocolExtensionPacket = (type: number, packet: Uint8Array, read: JsTransportRead, write: JsTransportWrite) => MaybePromise<void>;
 
-export type JsWispV2ConnectionPrefs = () => [JsWispV2Handshake | undefined, Uint8Array];
+export type JsWispV2ConnectionPrefs = () => JsWispV2Handshake | undefined;
 export type JsWispV2Middleware = (extensions: unknown[]) => MaybePromise<void>;
 export type WispExtensionList = unknown[];
 "#;

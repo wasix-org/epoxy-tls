@@ -116,10 +116,12 @@ fn get_supported_extensions(
 }
 
 fn missing_required_extensions(
-	extensions: &[AnyProtocolExtension],
+	extensions: Option<&[AnyProtocolExtension]>,
 	required: Vec<u8>,
 ) -> Option<Vec<u8>> {
-	let ids: Vec<u8> = extensions.iter().map(|x| x.get_id()).collect();
+	let ids: Vec<u8> = extensions
+		.map(|x| x.iter().map(|x| x.get_id()).collect())
+		.unwrap_or_else(|| vec![UdpProtocolExtension::ID]);
 	let missing: Vec<u8> = required.into_iter().filter(|x| !ids.contains(x)).collect();
 	(!missing.is_empty()).then_some(missing)
 }

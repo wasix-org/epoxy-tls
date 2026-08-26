@@ -79,7 +79,7 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 			match packet {
 				MaybeInfoPacket::Info(info) => {
 					// v2 server
-					if let Some(missing) = missing_required_extensions(&info.extensions, required) {
+					if let Some(missing) = missing_required_extensions(Some(&info.extensions), required) {
 						tx.lock().await;
 						let mut handle = tx.get_handle();
 						handle
@@ -128,6 +128,10 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 				MaybeInfoPacket::Packet(packet) => {
 					// downgrade to v1
 					let buffer_size = validate_continue_packet(&packet)?;
+
+					if let Some(missing) = missing_required_extensions(None, required) {
+						return Err(WispError::ExtensionsNotSupported(missing));
+					}
 
 					Ok(WispHandshakeResult {
 						kind: WispHandshakeResultKind::V1 { packet: None },

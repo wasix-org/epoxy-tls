@@ -18,8 +18,9 @@ use crate::{
 };
 
 use super::{
-	ProviderServiceReq, ProviderUnencryptedStream, service::ProviderService,
-	wisp::WispProviderStream,
+	ProviderServiceReq, ProviderUnencryptedStream,
+	service::ProviderService,
+	wisp::{WispProviderReq, WispProviderStream},
 };
 
 #[wasm_bindgen]
@@ -108,13 +109,20 @@ impl ProviderService<ProviderServiceReq> for EitherSocketProvider {
 	}
 }
 
-impl ProviderService<String> for JsProvider {
+impl ProviderService<WispProviderReq> for JsProvider {
 	type Response = WispProviderStream;
 	type Error = EpoxyError;
 	type Future = impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
-	fn call(&self, request: String) -> Self::Future {
-		let ret = self.provider.0.call1(&JsValue::NULL, &request.into());
+	fn call(&self, request: WispProviderReq) -> Self::Future {
+		let protocol = match request.protocol {
+			Some(protocol) => protocol.into(),
+			None => JsValue::UNDEFINED,
+		};
+		let ret = self
+			.provider
+			.0
+			.call2(&JsValue::NULL, &request.server.into(), &protocol);
 
 		SendWrapper(async move {
 			let (read, write) = Self::map_result(ret.js_error()?).await?;
