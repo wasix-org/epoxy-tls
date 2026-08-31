@@ -53,6 +53,9 @@ toml = ["dep:toml"]
 twisp = ["dep:pty-process", "dep:libc", "dep:shell-words"]
 speed-limit = ["dep:async-speed-limit"]
 
+[build-dependencies]
+vergen-git2 = { version = "1.0.0", features = ["rustc"] }
+
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 tikv-jemalloc-ctl = { version = "0.6.0", features = ["stats", "use_std"] }
 tikv-jemallocator = "0.6.0"
