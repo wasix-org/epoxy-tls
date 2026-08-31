@@ -4,15 +4,16 @@ This directory is a ready-to-run Wasmer package for the WASIX Epoxy server.
 Its package manifest mounts `config/config.toml` at `/etc/epoxy/config.toml`
 and passes that path to the `wisp-proxy` entrypoint as a WASI argument.
 
-Build the module from the repository root:
+Run the published proxy locally:
+
+```console
+wasmer run wasmer/wisp-server --net
+```
+
+To build and run the package from source instead, use:
 
 ```console
 ./wasmer/build.sh
-```
-
-Then run the package:
-
-```console
 wasmer run ./wasmer --net
 ```
 
@@ -23,7 +24,7 @@ Individual settings can still be overridden with the supported `WISP_*`
 environment variables. For example:
 
 ```console
-wasmer run ./wasmer --net \
+wasmer run wasmer/wisp-server --net \
   --env WISP_AUTOCONFIGURE_DOMAIN=https://app.example.com/wisp-autoconfigure
 ```
 
