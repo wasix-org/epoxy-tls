@@ -1,5 +1,5 @@
 [package]
-name = "wasmer/wisp-proxy"
+name = "wasmer/wisp-server"
 version = "0.1.0"
 description = "A WASIX build of Epoxy's multiplexed WISP proxy"
 license = "AGPL-3.0-only"
