@@ -1,0 +1,25 @@
+[package]
+name = "wasmer/wisp-proxy"
+version = "0.1.0"
+description = "A WASIX build of Epoxy's multiplexed WISP proxy"
+license = "AGPL-3.0-only"
+readme = "README.md"
+repository = "https://github.com/wasix-org/epoxy-tls"
+entrypoint = "wisp-proxy"
+
+[fs]
+"/etc/epoxy" = "config"
+
+[[module]]
+name = "wisp-proxy"
+source = "modules/wisp-proxy.wasm"
+abi = "wasi"
+
+[[command]]
+name = "wisp-proxy"
+module = "wisp-proxy"
+runner = "wasi"
+
+[command.annotations.wasi]
+exec-name = "epoxy-server"
+main-args = ["/etc/epoxy/config.toml"]

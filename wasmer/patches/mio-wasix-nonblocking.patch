@@ -1,0 +1,24 @@
+diff --git a/src/sys/wasi/net.rs b/src/sys/wasi/net.rs
+index bc9dd54..adc6706 100644
+--- a/src/sys/wasi/net.rs
++++ b/src/sys/wasi/net.rs
+@@ -66,0 +67,5 @@ pub(crate) fn new_socket(domain: libc::c_int, socket_type: libc::c_int) -> io::R
++    unsafe {
++        wasi::fd_fdstat_set_flags(socket, wasi::FDFLAGS_NONBLOCK)
++            .map_err(|errno| io::Error::from_raw_os_error(errno.raw() as i32))?;
++    }
++
+diff --git a/src/sys/wasi/tcp.rs b/src/sys/wasi/tcp.rs
+index b09dfaa..a2bd966 100644
+--- a/src/sys/wasi/tcp.rs
++++ b/src/sys/wasi/tcp.rs
+@@ -31 +31 @@ pub(crate) fn connect(socket: &net::TcpStream, addr: SocketAddr) -> io::Result<(
+-    unsafe {
++    match unsafe {
+@@ -35 +35,5 @@ pub(crate) fn connect(socket: &net::TcpStream, addr: SocketAddr) -> io::Result<(
+-        ).map_err(|errno| io::Error::from_raw_os_error(errno.raw() as i32))
++        )
++    } {
++        Ok(()) => Ok(()),
++        Err(errno) if errno == wasi::ERRNO_INPROGRESS || errno == wasi::ERRNO_AGAIN => Ok(()),
++        Err(errno) => Err(io::Error::from_raw_os_error(errno.raw() as i32)),

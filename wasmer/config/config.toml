@@ -1,0 +1,21 @@
+[server]
+bind = ["tcp", "0.0.0.0:4000"]
+runtime = "singlethread"
+transport = "websocket"
+log_level = "INFO"
+
+[wisp]
+prefix = ""
+wisp_v2 = true
+allow_wsproxy = false
+extensions = ["motd"]
+
+[stream]
+allow_udp = false
+allow_wsproxy_udp = false
+allow_direct_ip = false
+allow_loopback = false
+allow_multicast = false
+allow_global = true
+allow_non_global = false
+allow_ports = [[80, 80], [443, 443]]
