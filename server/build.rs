@@ -1,16 +1,6 @@
-use std::error::Error;
-
-use vergen_git2::{Emitter, Git2Builder, RustcBuilder};
-
-fn main() -> Result<(), Box<dyn Error>> {
-	let rustc = RustcBuilder::default()
-		.semver(true)
-		.host_triple(true)
-		.build()?;
-	let git = Git2Builder::default().sha(true).dirty(true).build()?;
-	Emitter::new()
-		.add_instructions(&rustc)?
-		.add_instructions(&git)?
-		.emit()?;
-	Ok(())
+fn main() {
+	println!("cargo:rustc-env=VERGEN_GIT_SHA=0c11678d72a636c3a4bc723db87e03e7b888eaf9");
+	println!("cargo:rustc-env=VERGEN_GIT_DIRTY=false");
+	println!("cargo:rustc-env=VERGEN_RUSTC_SEMVER=wasix");
+	println!("cargo:rustc-env=VERGEN_RUSTC_HOST_TRIPLE=wasm32-wasmer-wasi");
 }

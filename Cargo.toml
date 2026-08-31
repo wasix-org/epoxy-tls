@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["server", "client", "wisp", "simple-wisp-client"]
+members = ["server", "wisp"]
 
 [profile.release]
 lto = true
@@ -12,6 +12,7 @@ opt-level = 3
 
 [patch.crates-io]
 h2 = { git = "https://github.com/r58Playz/h2-wasm" }
+mio = { path = "../mio" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

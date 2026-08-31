@@ -9,15 +9,18 @@ use clap::Parser;
 use config::{validate_config_cache, BindAddr, Cli, Config, RuntimeFlavor, StatsEndpoint};
 use futures_util::{future::select_all, FutureExt, TryFutureExt};
 use handle::{handle_wisp, handle_wsproxy, wisp::wispnet::handle_wispnet};
+use hickory_resolver::TokioResolver;
+#[cfg(not(target_os = "wasi"))]
 use hickory_resolver::{
 	config::{NameServerConfigGroup, ResolverConfig},
 	name_server::TokioConnectionProvider,
 	system_conf::read_system_conf,
-	TokioResolver,
 };
 use lazy_static::lazy_static;
 use listener::ServerListener;
-use log::{debug, error, info, trace, warn};
+#[cfg(not(target_os = "wasi"))]
+use log::warn;
+use log::{debug, error, info, trace};
 use route::{route_stats, ServerRouteResult};
 use stats::generate_stats;
 use tokio::{
@@ -79,7 +82,7 @@ lazy_static! {
 	pub static ref CLI: Cli = Cli::parse();
 	#[doc(hidden)]
 	pub static ref CONFIG: Config = {
-		if let Some(path) = &CLI.config {
+		let mut config = if let Some(path) = &CLI.config {
 			Config::de(
 				&read_to_string(path)
 					.context("failed to read config")
@@ -88,13 +91,28 @@ lazy_static! {
 			.context("failed to parse config")
 			.unwrap()
 		} else {
-			Config::default()
-		}
+			#[cfg(target_os = "wasi")]
+			{
+				Config::wasix_defaults()
+			}
+			#[cfg(not(target_os = "wasi"))]
+			{
+				Config::default()
+			}
+		};
+		CLI.environment.apply_to(&mut config);
+		config
 	};
 	#[doc(hidden)]
 	pub static ref CLIENTS: Mutex<HashMap<String, Client>> = Mutex::new(HashMap::new());
 	#[doc(hidden)]
 	pub static ref RESOLVER: Resolver = {
+		#[cfg(target_os = "wasi")]
+		{
+			Resolver::System
+		}
+		#[cfg(not(target_os = "wasi"))]
+		{
 		if CONFIG.stream.dns_servers.is_empty() {
 			if let Ok((config, opts)) = read_system_conf() {
 				Resolver::Hickory(TokioResolver::builder_with_config(config, TokioConnectionProvider::default()).with_options(opts).build())
@@ -110,11 +128,13 @@ lazy_static! {
 				), TokioConnectionProvider::default()).build())
 
 		}
+		}
 	};
 }
 
 #[doc(hidden)]
 #[global_allocator]
+#[cfg(not(target_os = "wasi"))]
 static JEMALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[doc(hidden)]

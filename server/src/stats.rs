@@ -56,16 +56,28 @@ struct ServerStats {
 }
 
 pub async fn generate_stats() -> anyhow::Result<String> {
-	use tikv_jemalloc_ctl::stats::{active, allocated, mapped, metadata, resident, retained};
-	tikv_jemalloc_ctl::epoch::advance()?;
+	#[cfg(not(target_os = "wasi"))]
+	let memory = {
+		use tikv_jemalloc_ctl::stats::{active, allocated, mapped, metadata, resident, retained};
+		tikv_jemalloc_ctl::epoch::advance()?;
 
+		MemoryStats {
+			active: active::read()?,
+			allocated: allocated::read()?,
+			mapped: mapped::read()?,
+			metadata: metadata::read()?,
+			resident: resident::read()?,
+			retained: retained::read()?,
+		}
+	};
+	#[cfg(target_os = "wasi")]
 	let memory = MemoryStats {
-		active: active::read()?,
-		allocated: allocated::read()?,
-		mapped: mapped::read()?,
-		metadata: metadata::read()?,
-		resident: resident::read()?,
-		retained: retained::read()?,
+		active: 0,
+		allocated: 0,
+		mapped: 0,
+		metadata: 0,
+		resident: 0,
+		retained: 0,
 	};
 
 	let clients_locked = CLIENTS.lock().await;

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::IpAddr, ops::RangeInclusive, path::PathBuf};
 
 use cfg_if::cfg_if;
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Args, Parser, ValueEnum};
 use lazy_static::lazy_static;
 use log::LevelFilter;
 use regex::RegexSet;
@@ -47,7 +47,7 @@ pub enum SocketType {
 	File,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SocketTransport {
 	/// WebSocket transport.
@@ -59,7 +59,7 @@ pub enum SocketTransport {
 	LengthDelimitedLe,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeFlavor {
 	/// Single-threaded tokio runtime.
@@ -117,6 +117,8 @@ pub struct ServerConfig {
 	pub use_real_ip_headers: bool,
 	/// String sent to a request that is not a websocket upgrade request.
 	pub non_ws_response: String,
+	/// Optional URL for a browser-side WISP autoconfiguration bridge.
+	pub autoconfigure_domain: Option<String>,
 
 	/// Max WebSocket message size that can be recieved.
 	pub max_message_size: usize,
@@ -127,7 +129,7 @@ pub struct ServerConfig {
 	pub runtime: RuntimeFlavor,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtension {
 	/// Wisp version 2 UDP protocol extension.
@@ -343,6 +345,7 @@ impl Default for ServerConfig {
 
 			use_real_ip_headers: false,
 			non_ws_response: ":3".to_string(),
+			autoconfigure_domain: None,
 
 			max_message_size: 64 * 1024,
 
@@ -518,6 +521,30 @@ impl StreamConfig {
 }
 
 impl Config {
+	#[cfg(target_os = "wasi")]
+	pub fn wasix_defaults() -> Self {
+		let mut config = Self::default();
+		config.server.bind = (SocketType::Tcp, "0.0.0.0:4000".to_string());
+		config.server.runtime = RuntimeFlavor::SingleThread;
+		config.server.transport = SocketTransport::WebSocket;
+		config.server.log_level = LevelFilter::Info;
+
+		config.wisp.allow_wsproxy = false;
+		config.wisp.prefix.clear();
+		config.wisp.wisp_v2 = true;
+		config.wisp.extensions = vec![ProtocolExtension::Motd];
+
+		config.stream.allow_udp = false;
+		config.stream.allow_wsproxy_udp = false;
+		config.stream.allow_direct_ip = false;
+		config.stream.allow_loopback = false;
+		config.stream.allow_multicast = false;
+		config.stream.allow_global = true;
+		config.stream.allow_non_global = false;
+		config.stream.allow_ports = vec![vec![80, 80], vec![443, 443]];
+		config
+	}
+
 	#[doc(hidden)]
 	pub fn ser(&self) -> anyhow::Result<String> {
 		Ok(match CLI.format {
@@ -539,6 +566,138 @@ impl Config {
 			ConfigFormat::Yaml => serde_yaml::from_str(string)?,
 		})
 	}
+}
+
+#[derive(Args, Debug, Default)]
+pub struct EnvironmentConfig {
+	#[arg(long, env = "WISP_SERVER_BIND")]
+	server_bind: Option<String>,
+	#[arg(long, env = "WISP_SERVER_RUNTIME", value_enum)]
+	server_runtime: Option<RuntimeFlavor>,
+	#[arg(long, env = "WISP_SERVER_TRANSPORT", value_enum)]
+	server_transport: Option<SocketTransport>,
+	#[arg(long, env = "WISP_SERVER_LOG_LEVEL")]
+	server_log_level: Option<LevelFilter>,
+	#[arg(long, env = "WISP_AUTOCONFIGURE_DOMAIN")]
+	autoconfigure_domain: Option<String>,
+
+	#[arg(long, env = "WISP_PROTOCOL_ALLOW_WSPROXY", action = ArgAction::Set)]
+	protocol_allow_wsproxy: Option<bool>,
+	#[arg(long, env = "WISP_PROTOCOL_BUFFER_SIZE")]
+	protocol_buffer_size: Option<u32>,
+	#[arg(long, env = "WISP_PROTOCOL_PREFIX")]
+	protocol_prefix: Option<String>,
+	#[arg(long, env = "WISP_PROTOCOL_V2", action = ArgAction::Set)]
+	protocol_v2: Option<bool>,
+	#[arg(
+		long,
+		env = "WISP_PROTOCOL_EXTENSIONS",
+		value_enum,
+		value_delimiter = ','
+	)]
+	protocol_extensions: Option<Vec<ProtocolExtension>>,
+
+	#[arg(long, env = "WISP_STREAM_TCP_NODELAY", action = ArgAction::Set)]
+	stream_tcp_nodelay: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_BUFFER_SIZE")]
+	stream_buffer_size: Option<usize>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_UDP", action = ArgAction::Set)]
+	stream_allow_udp: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_WSPROXY_UDP", action = ArgAction::Set)]
+	stream_allow_wsproxy_udp: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_DIRECT_IP", action = ArgAction::Set)]
+	stream_allow_direct_ip: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_LOOPBACK", action = ArgAction::Set)]
+	stream_allow_loopback: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_MULTICAST", action = ArgAction::Set)]
+	stream_allow_multicast: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_GLOBAL", action = ArgAction::Set)]
+	stream_allow_global: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_NON_GLOBAL", action = ArgAction::Set)]
+	stream_allow_non_global: Option<bool>,
+	#[arg(long, env = "WISP_STREAM_ALLOW_PORTS", value_delimiter = ',', value_parser = parse_port_range)]
+	stream_allow_ports: Option<Vec<Vec<u16>>>,
+}
+
+impl EnvironmentConfig {
+	pub fn apply_to(&self, config: &mut Config) {
+		if let Some(value) = &self.server_bind {
+			config.server.bind.1.clone_from(value);
+		}
+		if let Some(value) = self.server_runtime {
+			config.server.runtime = value;
+		}
+		if let Some(value) = self.server_transport {
+			config.server.transport = value;
+		}
+		if let Some(value) = self.server_log_level {
+			config.server.log_level = value;
+		}
+		if let Some(value) = &self.autoconfigure_domain {
+			config.server.autoconfigure_domain = Some(value.clone());
+		}
+
+		if let Some(value) = self.protocol_allow_wsproxy {
+			config.wisp.allow_wsproxy = value;
+		}
+		if let Some(value) = self.protocol_buffer_size {
+			config.wisp.buffer_size = value;
+		}
+		if let Some(value) = &self.protocol_prefix {
+			config.wisp.prefix.clone_from(value);
+		}
+		if let Some(value) = self.protocol_v2 {
+			config.wisp.wisp_v2 = value;
+		}
+		if let Some(value) = &self.protocol_extensions {
+			config.wisp.extensions.clone_from(value);
+		}
+
+		if let Some(value) = self.stream_tcp_nodelay {
+			config.stream.tcp_nodelay = value;
+		}
+		if let Some(value) = self.stream_buffer_size {
+			config.stream.buffer_size = value;
+		}
+		if let Some(value) = self.stream_allow_udp {
+			config.stream.allow_udp = value;
+		}
+		if let Some(value) = self.stream_allow_wsproxy_udp {
+			config.stream.allow_wsproxy_udp = value;
+		}
+		if let Some(value) = self.stream_allow_direct_ip {
+			config.stream.allow_direct_ip = value;
+		}
+		if let Some(value) = self.stream_allow_loopback {
+			config.stream.allow_loopback = value;
+		}
+		if let Some(value) = self.stream_allow_multicast {
+			config.stream.allow_multicast = value;
+		}
+		if let Some(value) = self.stream_allow_global {
+			config.stream.allow_global = value;
+		}
+		if let Some(value) = self.stream_allow_non_global {
+			config.stream.allow_non_global = value;
+		}
+		if let Some(value) = &self.stream_allow_ports {
+			config.stream.allow_ports.clone_from(value);
+		}
+	}
+}
+
+fn parse_port_range(value: &str) -> Result<Vec<u16>, String> {
+	let (start, end) = value.split_once('-').unwrap_or((value, value));
+	let start = start
+		.parse::<u16>()
+		.map_err(|_| format!("invalid port range {value:?}"))?;
+	let end = end
+		.parse::<u16>()
+		.map_err(|_| format!("invalid port range {value:?}"))?;
+	if start > end {
+		return Err(format!("invalid descending port range {value:?}"));
+	}
+	Ok(vec![start, end])
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
@@ -571,13 +730,17 @@ impl Default for ConfigFormat {
 #[command(version = VERSION_STRING)]
 pub struct Cli {
 	/// Config file to use.
+	#[arg(env = "WISP_CONFIG_FILE")]
 	pub config: Option<PathBuf>,
 
 	/// Config file format to use.
-	#[arg(short, long, value_enum, default_value_t = ConfigFormat::default())]
+	#[arg(short, long, env = "WISP_CONFIG_FORMAT", value_enum, default_value_t = ConfigFormat::default())]
 	pub format: ConfigFormat,
 
 	/// Show default config and exit.
 	#[arg(long)]
 	pub default_config: bool,
+
+	#[command(flatten)]
+	pub environment: EnvironmentConfig,
 }

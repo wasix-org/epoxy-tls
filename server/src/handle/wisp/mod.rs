@@ -11,7 +11,7 @@ use event_listener::Event;
 use futures_util::{future::Either, FutureExt, SinkExt, StreamExt};
 use log::{debug, trace};
 use tokio::{
-	io::{AsyncWriteExt, BufReader},
+	io::{AsyncReadExt, AsyncWriteExt, BufReader},
 	net::TcpStream,
 	select,
 	task::JoinSet,
@@ -55,9 +55,21 @@ async fn copy_fast(
 
 	let mut tcprx = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
 
+	let tcp_to_mux = async {
+		let mut data = vec![0_u8; CONFIG.stream.buffer_size];
+		loop {
+			let size = tcprx.read(&mut data).await?;
+			if size == 0 {
+				break Ok::<(), std::io::Error>(());
+			}
+			muxtx.write_all(&data[..size]).await?;
+			muxtx.flush().await?;
+		}
+	};
+
 	select! {
-		x = tokio::io::copy_buf(&mut muxrx, &mut tcptx) => x?,
-		x = tokio::io::copy(&mut tcprx, &mut muxtx) => x?,
+		x = tokio::io::copy_buf(&mut muxrx, &mut tcptx) => { x?; },
+		x = tcp_to_mux => x?,
 	};
 
 	Ok(())

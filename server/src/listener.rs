@@ -1,7 +1,8 @@
+#[cfg(not(target_os = "wasi"))]
+use std::os::fd::AsFd;
 use std::{
 	io::{BufReader, Cursor},
 	net::SocketAddr,
-	os::fd::AsFd,
 	path::PathBuf,
 	pin::Pin,
 	str::FromStr,
@@ -10,12 +11,19 @@ use std::{
 
 use anyhow::Context;
 use rustls_pemfile::{certs, private_key};
+#[cfg(not(target_os = "wasi"))]
+use tokio::fs::{remove_file, try_exists};
+#[cfg(target_os = "wasi")]
+use tokio::net::{tcp as unix, TcpListener as UnixListener, TcpStream as UnixStream};
+#[cfg(not(target_os = "wasi"))]
+use tokio::net::{unix, UnixListener, UnixStream};
 use tokio::{
-	fs::{remove_file, try_exists, File},
+	fs::File,
 	io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
-	net::{tcp, unix, TcpListener, TcpSocket, TcpStream, UnixListener, UnixStream},
+	net::{tcp, TcpListener, TcpSocket, TcpStream},
 };
 use tokio_rustls::{rustls, server::TlsStream, TlsAcceptor};
+#[cfg(not(target_os = "wasi"))]
 use uuid::Uuid;
 
 use crate::{
@@ -290,6 +298,7 @@ impl ServerListener {
 	async fn bind_tcp(bind: &BindAddr) -> anyhow::Result<TcpListener> {
 		if CONFIG.server.runtime.is_thread_per_core() {
 			let listener = TcpSocket::new_v4()?;
+			#[cfg(not(target_os = "wasi"))]
 			listener
 				.set_reuseport(true)
 				.context("failed to set SO_REUSEPORT")?;
@@ -304,6 +313,12 @@ impl ServerListener {
 		}
 	}
 
+	#[cfg(target_os = "wasi")]
+	async fn bind_unix(_bind: &BindAddr) -> anyhow::Result<UnixListener> {
+		Err(anyhow::anyhow!("Unix listeners are unavailable on WASIX"))
+	}
+
+	#[cfg(not(target_os = "wasi"))]
 	async fn bind_unix(bind: &BindAddr) -> anyhow::Result<UnixListener> {
 		if try_exists(&bind.1).await? {
 			remove_file(&bind.1).await?;
@@ -373,6 +388,12 @@ impl ServerListener {
 		Ok((stream, addr.to_string()))
 	}
 
+	#[cfg(target_os = "wasi")]
+	async fn accept_unix(_listener: &mut UnixListener) -> anyhow::Result<(UnixStream, String)> {
+		Err(anyhow::anyhow!("Unix listeners are unavailable on WASIX"))
+	}
+
+	#[cfg(not(target_os = "wasi"))]
 	async fn accept_unix(listener: &mut UnixListener) -> anyhow::Result<(UnixStream, String)> {
 		let (stream, addr) = listener
 			.accept()
@@ -417,6 +438,7 @@ impl ServerListener {
 						.await
 						.context("failed to open read file")?;
 
+					#[cfg(not(target_os = "wasi"))]
 					if CONFIG.server.file_raw_mode {
 						let mut termios = nix::sys::termios::tcgetattr(rx.as_fd())
 							.context("failed to get termios for read file")?
@@ -437,6 +459,7 @@ impl ServerListener {
 						.await
 						.context("failed to open write file")?;
 
+					#[cfg(not(target_os = "wasi"))]
 					if CONFIG.server.file_raw_mode {
 						let mut termios = nix::sys::termios::tcgetattr(tx.as_fd())
 							.context("failed to get termios for write file")?
