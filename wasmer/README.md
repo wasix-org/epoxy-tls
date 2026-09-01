@@ -49,26 +49,16 @@ comma-separated. Ports accept either one port (`443`) or an inclusive range
 Browsers do not allow one unrelated tab to directly address another tab on a
 different origin. `WISP_AUTOCONFIGURE` therefore identifies a bridge
 page you control, such as `https://app.example.com/wisp-autoconfigure`. The
-WISP landing page loads it in a hidden iframe and sends this message:
+WISP landing page redirects its tab to that URL with the WISP endpoint in the
+`endpoint` query parameter. Making the bridge top-level is important because
+modern browsers partition cross-tab channels used by third-party iframes.
 
-```js
-{
-  type: "wisp-autoconfigure",
-  version: 1,
-  endpoint: "wss://wisp.example.com/"
-}
-```
-
-The bridge can relay it to already-open tabs on its own origin:
+The bridge can relay the query parameter to already-open tabs on its own origin:
 
 ```js
 const channel = new BroadcastChannel("wisp-autoconfigure");
-
-window.addEventListener("message", (event) => {
-  if (event.origin !== "https://wisp.example.com") return;
-  if (event.data?.type !== "wisp-autoconfigure" || event.data.version !== 1) return;
-  channel.postMessage(event.data);
-});
+const endpoint = new URL(location.href).searchParams.get("endpoint");
+channel.postMessage({ type: "wisp-autoconfigure", version: 1, endpoint });
 ```
 
 The existing application tab listens on the same channel:
@@ -81,9 +71,6 @@ channel.addEventListener("message", ({ data }) => {
   }
 });
 ```
-
-The bridge response must permit the WISP origin through its CSP
-`frame-ancestors` directive and must not send `X-Frame-Options: DENY`.
 
 The packaged policy only permits TCP ports 80 and 443 and blocks loopback,
 multicast, and non-global targets. It permits direct global IP addresses because

@@ -124,7 +124,7 @@ fn websocket_url(req: &Request<Incoming>) -> String {
 	format!("{scheme}://{host}{endpoint}")
 }
 
-fn autoconfigure_target() -> Option<(String, String)> {
+fn autoconfigure_target() -> Option<String> {
 	let configured = CONFIG.server.autoconfigure_domain.as_deref()?.trim();
 	if configured.is_empty() {
 		return None;
@@ -139,8 +139,8 @@ fn autoconfigure_target() -> Option<(String, String)> {
 	if scheme != "http" && scheme != "https" {
 		return None;
 	}
-	let authority = uri.authority()?;
-	Some((target, format!("{scheme}://{authority}")))
+	uri.authority()?;
+	Some(target)
 }
 
 fn index_resp(req: &Request<Incoming>) -> anyhow::Result<Response<Body>> {
@@ -152,28 +152,17 @@ fn index_resp(req: &Request<Incoming>) -> anyhow::Result<Response<Body>> {
 	} else {
 		""
 	};
-	let autoconfigure_script = if let Some((bridge_url, bridge_origin)) = autoconfigure {
+	let autoconfigure_script = if let Some(bridge_url) = autoconfigure {
 		let bridge_url = serde_json::to_string(&bridge_url)?;
-		let bridge_origin = serde_json::to_string(&bridge_origin)?;
 		let endpoint = serde_json::to_string(&raw_url)?;
 		format!(
 			r#"<script>
   (() => {{
     const bridgeUrl = {bridge_url};
-    const bridgeOrigin = {bridge_origin};
     const endpoint = {endpoint};
-    const frame = document.createElement('iframe');
-    frame.hidden = true;
-    frame.title = 'WISP autoconfiguration bridge';
-    frame.src = bridgeUrl;
-    frame.addEventListener('load', () => {{
-      frame.contentWindow.postMessage({{
-        type: 'wisp-autoconfigure',
-        version: 1,
-        endpoint
-      }}, bridgeOrigin);
-    }});
-    document.body.append(frame);
+    const target = new URL(bridgeUrl);
+    target.searchParams.set('endpoint', endpoint);
+    window.location.replace(target.href);
   }})();
 </script>"#
 		)
