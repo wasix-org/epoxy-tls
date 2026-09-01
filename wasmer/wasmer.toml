@@ -1,6 +1,6 @@
 [package]
 name = "wasmer/wisp-server"
-version = "0.0.5"
+version = "0.0.6"
 description = "A WASIX build of Epoxy's multiplexed WISP proxy"
 license = "AGPL-3.0-only"
 readme = "README.md"
