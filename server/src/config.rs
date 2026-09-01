@@ -578,7 +578,7 @@ pub struct EnvironmentConfig {
 	server_transport: Option<SocketTransport>,
 	#[arg(long, env = "WISP_SERVER_LOG_LEVEL")]
 	server_log_level: Option<LevelFilter>,
-	#[arg(long, env = "WISP_AUTOCONFIGURE_DOMAIN")]
+	#[arg(long, env = "WISP_AUTOCONFIGURE")]
 	autoconfigure_domain: Option<String>,
 
 	#[arg(long, env = "WISP_PROTOCOL_ALLOW_WSPROXY", action = ArgAction::Set)]

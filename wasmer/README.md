@@ -25,13 +25,13 @@ environment variables. For example:
 
 ```console
 wasmer run wasmer/wisp-server --net \
-  --env WISP_AUTOCONFIGURE_DOMAIN=https://app.example.com/wisp-autoconfigure
+  --env WISP_AUTOCONFIGURE=https://app.example.com/wisp-autoconfigure
 ```
 
 Available variables are:
 
 - `WISP_SERVER_BIND`, `WISP_SERVER_RUNTIME`, `WISP_SERVER_TRANSPORT`,
-  `WISP_SERVER_LOG_LEVEL`, `WISP_AUTOCONFIGURE_DOMAIN`
+  `WISP_SERVER_LOG_LEVEL`, `WISP_AUTOCONFIGURE`
 - `WISP_PROTOCOL_ALLOW_WSPROXY`, `WISP_PROTOCOL_BUFFER_SIZE`,
   `WISP_PROTOCOL_PREFIX`, `WISP_PROTOCOL_V2`, `WISP_PROTOCOL_EXTENSIONS`
 - `WISP_STREAM_TCP_NODELAY`, `WISP_STREAM_BUFFER_SIZE`,
@@ -47,7 +47,7 @@ comma-separated. Ports accept either one port (`443`) or an inclusive range
 ## Cross-origin browser autoconfiguration
 
 Browsers do not allow one unrelated tab to directly address another tab on a
-different origin. `WISP_AUTOCONFIGURE_DOMAIN` therefore identifies a bridge
+different origin. `WISP_AUTOCONFIGURE` therefore identifies a bridge
 page you control, such as `https://app.example.com/wisp-autoconfigure`. The
 WISP landing page loads it in a hidden iframe and sends this message:
 
