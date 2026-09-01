@@ -85,7 +85,8 @@ channel.addEventListener("message", ({ data }) => {
 The bridge response must permit the WISP origin through its CSP
 `frame-ancestors` directive and must not send `X-Frame-Options: DENY`.
 
-The packaged policy only permits TCP ports 80 and 443 and blocks direct,
-loopback, multicast, and non-global targets. Add WISP authentication or enforce
-access at the deployment edge before exposing it publicly; an unauthenticated
-WISP endpoint is still an outbound proxy.
+The packaged policy only permits TCP ports 80 and 443 and blocks loopback,
+multicast, and non-global targets. It permits direct global IP addresses because
+browser WASIX clients connect to the address selected by their DNS resolver.
+Add WISP authentication or enforce access at the deployment edge before exposing
+it publicly; an unauthenticated WISP endpoint is still an outbound proxy.
