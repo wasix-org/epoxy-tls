@@ -124,7 +124,7 @@ fn websocket_url(req: &Request<Incoming>) -> String {
 	format!("{scheme}://{host}{endpoint}")
 }
 
-fn autoconfigure_target() -> Option<String> {
+fn autoconfigure_target() -> Option<(String, String)> {
 	let configured = CONFIG.server.autoconfigure_domain.as_deref()?.trim();
 	if configured.is_empty() {
 		return None;
@@ -139,20 +139,24 @@ fn autoconfigure_target() -> Option<String> {
 	if scheme != "http" && scheme != "https" {
 		return None;
 	}
-	uri.authority()?;
-	Some(target)
+	let authority = uri.authority()?.to_string();
+	Some((target, authority))
 }
 
 fn index_resp(req: &Request<Incoming>) -> anyhow::Result<Response<Body>> {
 	let raw_url = websocket_url(req);
 	let url = html_escape(&raw_url);
 	let autoconfigure = autoconfigure_target();
-	let autoconfigure_label = if autoconfigure.is_some() {
-		r#"<span class="autoconfigure"><span class="pulse"></span> AUTOCONFIGURATION ENABLED</span>"#
+	let autoconfigure_link = if let Some((bridge_url, label)) = autoconfigure.as_ref() {
+		format!(
+			r#"<a id="autoconfigure" class="autoconfigure" href="{}"><span class="pulse"></span>Automatically connect to {}</a>"#,
+			html_escape(bridge_url),
+			html_escape(label),
+		)
 	} else {
-		""
+		String::new()
 	};
-	let autoconfigure_script = if let Some(bridge_url) = autoconfigure {
+	let autoconfigure_script = if let Some((bridge_url, _)) = autoconfigure {
 		let bridge_url = serde_json::to_string(&bridge_url)?;
 		let endpoint = serde_json::to_string(&raw_url)?;
 		format!(
@@ -162,7 +166,7 @@ fn index_resp(req: &Request<Incoming>) -> anyhow::Result<Response<Body>> {
     const endpoint = {endpoint};
     const target = new URL(bridgeUrl);
     target.searchParams.set('endpoint', endpoint);
-    window.location.replace(target.href);
+    document.getElementById('autoconfigure').href = target.href;
   }})();
 </script>"#
 		)
@@ -197,8 +201,9 @@ fn index_resp(req: &Request<Incoming>) -> anyhow::Result<Response<Body>> {
     code {{ min-width: 0; overflow-wrap: anywhere; padding: 1rem; color: #111; font: inherit; line-height: 1.4; }}
     button {{ border: 0; border-left: 1px solid #111; border-radius: 0; padding: 0 1.25rem; background: #111; color: #fff; font: inherit; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; }}
     button:hover {{ background: #333; }}
-    .autoconfigure {{ display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem; color: #414141; font-size: 0.68rem; letter-spacing: 0.08em; }}
-    .pulse {{ display: inline-block; width: 0.4rem; height: 0.4rem; animation: blink 1.8s infinite; }}
+    .autoconfigure {{ display: inline-flex; align-items: center; gap: 0.55rem; margin-bottom: 1.25rem; padding: 0.8rem 1rem; background: #111; color: #fff; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-decoration: none; }}
+    .autoconfigure:hover {{ background: #333; }}
+    .pulse {{ display: inline-block; width: 0.4rem; height: 0.4rem; background: #5ee6a8; box-shadow: none; animation: blink 1.8s infinite; }}
     @keyframes blink {{ 50% {{ opacity: 0.35; }} }}
     @media (max-width: 38rem) {{
       .shell {{ width: min(100% - 1.25rem, 72rem); }}
@@ -218,7 +223,7 @@ fn index_resp(req: &Request<Incoming>) -> anyhow::Result<Response<Body>> {
       <section class="panel">
         <div class="hero">
           <p class="eyebrow">Connection established</p>
-          {autoconfigure_label}
+          {autoconfigure_link}
           <h1>WISP WebSocket server configured!</h1>
           <p class="lede">Your proxy is online. Copy and paste this endpoint into your WISP-compatible client to start routing traffic.</p>
           <label class="endpoint-label" for="wisp-url">WebSocket endpoint</label>

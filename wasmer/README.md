@@ -49,9 +49,11 @@ comma-separated. Ports accept either one port (`443`) or an inclusive range
 Browsers do not allow one unrelated tab to directly address another tab on a
 different origin. `WISP_AUTOCONFIGURE` therefore identifies a bridge
 page you control, such as `https://app.example.com/wisp-autoconfigure`. The
-WISP landing page redirects its tab to that URL with the WISP endpoint in the
-`endpoint` query parameter. Making the bridge top-level is important because
-modern browsers partition cross-tab channels used by third-party iframes.
+WISP landing page shows an **Automatically connect to …** link. Clicking it
+navigates the tab to that URL with the WISP endpoint in the `endpoint` query
+parameter. Requiring a click keeps the landing page stable for screenshots and
+previews. Making the bridge top-level is important because modern browsers
+partition cross-tab channels used by third-party iframes.
 
 The bridge can relay the query parameter to already-open tabs on its own origin:
 
