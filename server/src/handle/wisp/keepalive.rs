@@ -1,7 +1,7 @@
 //! Opt-in Wasmer TCP keepalive extension. See `wasmer/tcp-keepalive.md`.
 use std::{
 	collections::HashMap,
-	os::fd::{AsFd, AsRawFd, OwnedFd},
+	os::fd::{AsRawFd, OwnedFd},
 	sync::{Arc, Mutex},
 };
 
@@ -134,7 +134,7 @@ impl SocketRegistration {
 				return false;
 			}
 			*state = match stream {
-				ClientStream::Tcp(stream) => match stream.as_fd().try_clone_to_owned() {
+				ClientStream::Tcp(stream) => match duplicate_socket(stream) {
 					Ok(fd) => SocketState::Connected(Arc::new(fd)),
 					Err(error) => {
 						log::debug!("keepalive descriptor duplication failed: {error}");
@@ -163,6 +163,31 @@ impl Drop for SocketRegistration {
 		}
 		sender.send_replace(SocketState::Failed(Status::BadStream));
 	}
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn duplicate_socket(stream: &tokio::net::TcpStream) -> std::io::Result<OwnedFd> {
+	use std::os::fd::AsFd;
+	stream.as_fd().try_clone_to_owned()
+}
+
+#[cfg(target_os = "wasi")]
+fn duplicate_socket(stream: &tokio::net::TcpStream) -> std::io::Result<OwnedFd> {
+	use std::os::fd::FromRawFd;
+	#[link(wasm_import_module = "wasix_32v1")]
+	unsafe extern "C" {
+		fn fd_dup2(fd: u32, min_result_fd: u32, cloexec: u8, result: *mut u32) -> u16;
+	}
+	let mut duplicated = 0_u32;
+	// Rust's BorrowedFd::try_clone_to_owned is an unsupported WASI stub.
+	// WASIX provides real duplication, including close-on-exec semantics.
+	// SAFETY: the input fd is live and result points to one writable WASI fd.
+	let errno = unsafe { fd_dup2(stream.as_raw_fd() as u32, 0, 1, &raw mut duplicated) };
+	if errno != 0 {
+		return Err(std::io::Error::from_raw_os_error(errno.into()));
+	}
+	// SAFETY: fd_dup2 returned a new descriptor owned solely by this value.
+	Ok(unsafe { OwnedFd::from_raw_fd(duplicated as i32) })
 }
 
 #[derive(Debug, Clone)]

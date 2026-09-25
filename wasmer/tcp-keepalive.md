@@ -58,7 +58,9 @@ Other native platforms return unsupported for timing options they cannot map.
 The WASIX build calls `wasix_32v1.sock_set_opt_size` / `sock_get_opt_size` with
 option IDs 27 (idle), 28 (interval), and 29 (count), and the flag imports with
 option 12 for enabled. These direct imports avoid the old libc TCP_KEEP* mapping,
-which returns ENOSYS. **The deployed proxy's Wasmer runtime also needs support
+which returns ENOSYS. WASIX descriptor duplication uses the existing `fd_dup2`
+import because Rust's WASI descriptor-cloning implementation is unsupported.
+**The deployed proxy's Wasmer runtime also needs support
 for these new option IDs and real socket operations.** Updating only the browser
 SDK or the proxy package cannot add support to an older deployment host.
 
