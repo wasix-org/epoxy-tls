@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use bytes::{Buf, BufMut};
+use futures::SinkExt;
 use num_enum::{FromPrimitive, IntoPrimitive};
 
 use crate::{
@@ -423,15 +424,21 @@ impl MaybeExtensionPacket<'static> {
 				packet_type: PacketType::decode(packet, ty)?,
 			}))
 		} else {
-			tx.lock().await;
-			let mut handle = tx.get_handle();
 			for extension in extensions {
 				if extension.get_supported_packets().contains(&ty) {
-					extension.handle_packet(ty, packet, rx, &mut handle).await?;
+					let response = extension
+						.handle_stream_packet(ty, stream_id, packet.clone())
+						.await?;
+					tx.lock().await;
+					let mut handle = tx.get_handle();
+					if let Some(response) = response {
+						handle.send(response).await?;
+					} else {
+						extension.handle_packet(ty, packet, rx, &mut handle).await?;
+					}
 					return Ok(Self::ExtensionHandled);
 				}
 			}
-			drop(handle);
 
 			Err(WispError::InvalidPacketType(ty))
 		}

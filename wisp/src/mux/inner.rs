@@ -172,6 +172,7 @@ pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorAc
 	start: Option<MuxStart<R, W>>,
 	tx: LockedWebSocketWrite<W>,
 	flow_stream_types: Box<[u8]>,
+	extensions: Vec<AnyProtocolExtension>,
 
 	mux: M,
 
@@ -212,11 +213,12 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 				start: Some(MuxStart {
 					rx,
 					downgrade,
-					extensions,
+					extensions: extensions.clone(),
 					actor_rx,
 				}),
 				tx,
 				flow_stream_types: flow_extensions,
+				extensions,
 
 				mux,
 
@@ -233,6 +235,9 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 		let ret = self.entry().await;
 
 		for stream in self.streams.drain() {
+			for extension in &mut self.extensions {
+				extension.on_stream_close(stream.0);
+			}
 			Self::close_stream(
 				stream.1,
 				ClosePacket {
@@ -266,16 +271,17 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 			(rx, self.tx.clone(), extensions),
 			|(mut rx, mut tx, mut extensions)| async {
 				let ret: Result<Option<WsEvent<W>>, WispError> = async {
-					if let Some(msg) = rx.next().await {
+					while let Some(msg) = rx.next().await {
 						match MaybeExtensionPacket::decode(msg?, &mut extensions, &mut rx, &mut tx)
 							.await?
 						{
-							MaybeExtensionPacket::Packet(x) => Ok(Some(WsEvent::WispMessage(x))),
-							MaybeExtensionPacket::ExtensionHandled => Ok(None),
+							MaybeExtensionPacket::Packet(x) => {
+								return Ok(Some(WsEvent::WispMessage(x)))
+							}
+							MaybeExtensionPacket::ExtensionHandled => {}
 						}
-					} else {
-						Ok(None)
 					}
+					Ok(None)
 				}
 				.await;
 				ret.transpose().map(|x| (x, (rx, tx, extensions)))
@@ -310,6 +316,9 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 				}
 				WsEvent::Close(id, close, channel) => {
 					if let Some(stream) = self.streams.remove(&id) {
+						for extension in &mut self.extensions {
+							extension.on_stream_close(id);
+						}
 						Self::close_stream(stream, close);
 						let pkt = Packet {
 							stream_id: id,
@@ -373,6 +382,9 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 			stream: data_tx,
 		};
 		self.streams.insert(id, val);
+		for extension in &mut self.extensions {
+			extension.on_stream_open(id, ty);
+		}
 
 		MuxStream::new(data_rx, self.actor_tx.clone(), self.tx.clone(), info)
 	}
@@ -386,6 +398,9 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 		use PacketType as P;
 		match packet.packet_type {
 			P::Connect(connect) => {
+				if packet.stream_id == 0 || self.streams.contains_key(&packet.stream_id) {
+					return Err(WispError::InvalidStreamId(packet.stream_id));
+				}
 				let stream = self.add_stream(packet.stream_id, connect.stream_type);
 				self.mux.handle_connect_packet(stream, connect)?;
 				Ok(false)
@@ -416,6 +431,9 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 		}
 
 		if let Some(stream) = self.streams.remove(&stream_id) {
+			for extension in &mut self.extensions {
+				extension.on_stream_close(stream_id);
+			}
 			Self::close_stream(stream, close);
 		}
 

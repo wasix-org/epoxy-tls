@@ -136,6 +136,9 @@ pub enum ProtocolExtension {
 	Udp,
 	/// Wisp version 2 MOTD protocol extension.
 	Motd,
+	/// Wasmer TCP keepalive socket options (private WISP v2 extension).
+	#[serde(rename = "tcp-keepalive")]
+	TcpKeepalive,
 	/// Unofficial Wispnet-like protocol extension.
 	Wispnet,
 }
@@ -532,7 +535,7 @@ impl Config {
 		config.wisp.allow_wsproxy = false;
 		config.wisp.prefix.clear();
 		config.wisp.wisp_v2 = true;
-		config.wisp.extensions = vec![ProtocolExtension::Motd];
+		config.wisp.extensions = vec![ProtocolExtension::Motd, ProtocolExtension::TcpKeepalive];
 
 		config.stream.allow_udp = false;
 		config.stream.allow_wsproxy_udp = false;

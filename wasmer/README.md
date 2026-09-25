@@ -79,3 +79,10 @@ multicast, and non-global targets. It permits direct global IP addresses because
 browser WASIX clients connect to the address selected by their DNS resolver.
 Add WISP authentication or enforce access at the deployment edge before exposing
 it publicly; an unauthenticated WISP endpoint is still an outbound proxy.
+
+## TCP keepalive options
+
+The package enables the negotiated [Wasmer TCP keepalive extension](tcp-keepalive.md).
+It exposes real socket setters/getters to compatible browser clients. Its WASIX
+deployment host must support the new idle/interval/count socket option imports;
+building this package alone does not update the host runtime.

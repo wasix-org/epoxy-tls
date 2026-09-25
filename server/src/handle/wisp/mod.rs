@@ -1,3 +1,4 @@
+mod keepalive;
 #[cfg(feature = "twisp")]
 pub mod twisp;
 pub mod utils;
@@ -243,6 +244,7 @@ async fn handle_stream(
 	muxstream: MuxStream<WispStreamWrite>,
 	id: String,
 	event: Arc<Event>,
+	keepalive: keepalive::SocketRegistration,
 	#[cfg(feature = "twisp")] twisp_map: twisp::TwispMap,
 	#[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
 		async_speed_limit::clock::StandardClock,
@@ -263,6 +265,7 @@ async fn handle_stream(
 		return;
 	};
 
+	keepalive.attach(&stream);
 	debug!("[{id}] [{uuid}] stream resolved and connected: {resolved_stream:?}");
 
 	if let Some(client) = CLIENTS.lock().await.get(&id) {
@@ -316,6 +319,18 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 			};
 		} else {
 			let (extensions, required_extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+		}
+	}
+
+	let keepalive = keepalive::SocketRegistry::default();
+	let mut extensions = extensions;
+	if CONFIG
+		.wisp
+		.extensions
+		.contains(&crate::config::ProtocolExtension::TcpKeepalive)
+	{
+		if let Some(extensions) = &mut extensions {
+			extensions.add_extension(keepalive::KeepaliveBuilder(keepalive.clone()).into());
 		}
 	}
 
@@ -383,11 +398,13 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	});
 
 	while let Some((connect, stream)) = mux.wait_for_stream().await {
+		let registration = keepalive.register_stream(&stream);
 		set.spawn(handle_stream(
 			connect,
 			stream,
 			id.clone(),
 			event.clone(),
+			registration,
 			#[cfg(feature = "twisp")]
 			twisp_map.clone(),
 			#[cfg(feature = "speed-limit")]

@@ -23,7 +23,7 @@ http-body-util = "0.1.2"
 hyper = { version = "1.4.1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.7", features = ["tokio"] }
 lazy_static = "1.5.0"
-libc = { version = "0.2.158", optional = true }
+libc = "0.2.158"
 log = { version = "0.4.22", features = ["serde", "std"] }
 nix = { version = "0.30.1", features = ["term"] }
 pin-project-lite = "0.2.15"
@@ -50,7 +50,7 @@ default = ["toml"]
 yaml = ["dep:serde_yaml"]
 toml = ["dep:toml"]
 
-twisp = ["dep:pty-process", "dep:libc", "dep:shell-words"]
+twisp = ["dep:pty-process", "dep:shell-words"]
 speed-limit = ["dep:async-speed-limit"]
 
 [build-dependencies]

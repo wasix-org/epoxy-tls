@@ -8,7 +8,7 @@ log_level = "INFO"
 prefix = ""
 wisp_v2 = true
 allow_wsproxy = false
-extensions = ["motd"]
+extensions = ["motd", "tcp-keepalive"]
 
 [stream]
 allow_udp = false

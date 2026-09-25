@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes};
 
 use crate::{
+	packet::StreamType,
 	ws::{PayloadMut, TransportRead, TransportWrite},
 	Role, WispError,
 };
@@ -129,6 +130,29 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 	) -> Result<(), WispError> {
 		let _ = (packet_type, packet, read, write);
 		Ok(())
+	}
+
+	/// Handle a stream control request without holding the transport write lock.
+	/// Return a complete response frame, or `None` to use `handle_packet`.
+	async fn handle_stream_packet(
+		&mut self,
+		packet_type: u8,
+		stream_id: u32,
+		packet: Bytes,
+	) -> Result<Option<Bytes>, WispError> {
+		let _ = (packet_type, stream_id, packet);
+		Ok(None)
+	}
+
+	/// Called before a new stream is handed to the application. Cloned extension
+	/// instances must share any state used by this hook and the packet handler.
+	fn on_stream_open(&mut self, stream_id: u32, stream_type: StreamType) {
+		let _ = (stream_id, stream_type);
+	}
+
+	/// Called when a stream closes, including multiplexor shutdown.
+	fn on_stream_close(&mut self, stream_id: u32) {
+		let _ = stream_id;
 	}
 
 	/// Clone the protocol extension.
