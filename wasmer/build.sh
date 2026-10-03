@@ -7,9 +7,15 @@ readonly MIO_REVISION="1aea074c67eeeb98ac229660971249579693f248"
 readonly MIO_DIR="${ROOT_DIR}/.wasmer-build/mio"
 readonly MIO_PATCH="${ROOT_DIR}/wasmer/patches/mio-wasix-nonblocking.patch"
 readonly OUTPUT_DIR="${ROOT_DIR}/wasmer/modules"
+readonly WASM_TOOLS="${WASM_TOOLS:-wasm-tools}"
 
 if ! cargo wasix --version >/dev/null 2>&1; then
   echo "cargo-wasix is required; install it with: cargo install cargo-wasix" >&2
+  exit 1
+fi
+
+if ! command -v "${WASM_TOOLS}" >/dev/null 2>&1; then
+  echo "wasm-tools is required; install it with: cargo install wasm-tools" >&2
   exit 1
 fi
 
@@ -36,8 +42,23 @@ fi
 
 (
   cd "${ROOT_DIR}"
+  # Keep cargo-wasix's default features when the caller supplies no flags.
+  # Append the restriction last, including when encoded flags take precedence.
+  export RUSTFLAGS="${RUSTFLAGS:--C target-feature=+atomics,+simd128,+relaxed-simd,+extended-const} -C target-feature=-wide-arithmetic"
+  if [[ -n "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
+    if [[ -n "${CARGO_ENCODED_RUSTFLAGS}" ]]; then
+      CARGO_ENCODED_RUSTFLAGS+=$'\x1f'
+    fi
+    export CARGO_ENCODED_RUSTFLAGS="${CARGO_ENCODED_RUSTFLAGS}"'-C'$'\x1f''target-feature=-wide-arithmetic'
+  fi
   cargo wasix build --release --package epoxy-server --locked
 )
+
+# Check actual instructions after cargo-wasix's optimization, including code
+# linked from the sysroot and C dependencies. Do not replace a working package
+# if a toolchain or optimizer starts emitting wide arithmetic again.
+"${WASM_TOOLS}" validate --features=all,-wide-arithmetic \
+  "${ROOT_DIR}/target/wasm32-wasmer-wasi/release/epoxy-server.wasm"
 
 mkdir -p "${OUTPUT_DIR}"
 cp \
