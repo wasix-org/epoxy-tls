@@ -13,9 +13,33 @@ wasmer run wasmer/wisp-server --net
 To build and run the package from source instead, use:
 
 ```console
+cargo install cargo-wasix wasm-tools
 ./wasmer/build.sh
 wasmer run ./wasmer --net
 ```
+
+Ensure Cargo's binary directory (normally `~/.cargo/bin`) is on `PATH`.
+Alternatively, set `WASM_TOOLS` to the path of an installed `wasm-tools` binary.
+The build disables the `wide-arithmetic` compiler target feature and validates
+the final optimized module with wide arithmetic disabled before replacing the
+packaged Wasm. This keeps the server compatible with Wasmer's V8 runtime and
+avoids the compilation failure reported in
+[wasmerio/wasmer#7059](https://github.com/wasmerio/wasmer/issues/7059).
+No `--wide-arithmetic` runtime flag is required.
+
+To verify the package locally with V8 (including HTTP, WISP v1/v2, simultaneous
+streams, and certificate-verified TLS carrying 256 KiB responses), run:
+
+```console
+uv run wasmer/test-wasix.py --engine v8
+uv run wasmer/test-wasix.py --engine cranelift
+```
+
+These checks start temporary servers bound to loopback, verify the packaged
+loopback/multicast/UDP restrictions, and use separate test-only environment
+overrides to proxy local HTTP/TLS fixtures. Logs are saved under
+`.wasmer-build/smoke-<engine>/`. Add `--external` to also test public DNS and
+HTTP/HTTPS proxying to `example.com`; that check needs internet access.
 
 The configured server listens at `0.0.0.0:4000`. Ordinary requests to `/`
 show the connection page; WebSocket upgrades on the same URL enter WISP.
@@ -74,8 +98,10 @@ channel.addEventListener("message", ({ data }) => {
 });
 ```
 
-The packaged policy only permits TCP ports 80 and 443 and blocks loopback,
-multicast, and non-global targets. It permits direct global IP addresses because
+The packaged policy blocks UDP, loopback, multicast, and non-global targets.
+Its `allow_ports` list permits TCP ports 80 and 443 even when a port is in
+`block_ports`; it does not by itself block other ports. Configure `block_ports`
+if you need a strict port restriction. It permits direct global IP addresses because
 browser WASIX clients connect to the address selected by their DNS resolver.
 Add WISP authentication or enforce access at the deployment edge before exposing
 it publicly; an unauthenticated WISP endpoint is still an outbound proxy.
